@@ -551,6 +551,13 @@ func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string) (respons
 					continue
 				}
 
+				// Skip tool results from provider-executed tools
+				// (e.g., web_search_call). The provider handles
+				// these internally and doesn't expect them back.
+				if toolResultPart.ProviderExecuted {
+					continue
+				}
+
 				var outputStr string
 				switch toolResultPart.Output.GetType() {
 				case fantasy.ToolResultContentTypeText:

@@ -711,13 +711,15 @@ func (t *ToolCallPart) UnmarshalJSON(data []byte) error {
 // MarshalJSON implements json.Marshaler for ToolResultPart.
 func (t ToolResultPart) MarshalJSON() ([]byte, error) {
 	dataBytes, err := json.Marshal(struct {
-		ToolCallID      string                  `json:"tool_call_id"`
-		Output          ToolResultOutputContent `json:"output"`
-		ProviderOptions ProviderOptions         `json:"provider_options,omitempty"`
+		ToolCallID       string                  `json:"tool_call_id"`
+		Output           ToolResultOutputContent `json:"output"`
+		ProviderExecuted bool                    `json:"provider_executed,omitempty"`
+		ProviderOptions  ProviderOptions         `json:"provider_options,omitempty"`
 	}{
-		ToolCallID:      t.ToolCallID,
-		Output:          t.Output,
-		ProviderOptions: t.ProviderOptions,
+		ToolCallID:       t.ToolCallID,
+		Output:           t.Output,
+		ProviderExecuted: t.ProviderExecuted,
+		ProviderOptions:  t.ProviderOptions,
 	})
 	if err != nil {
 		return nil, err
@@ -737,9 +739,10 @@ func (t *ToolResultPart) UnmarshalJSON(data []byte) error {
 	}
 
 	var aux struct {
-		ToolCallID      string                     `json:"tool_call_id"`
-		Output          json.RawMessage            `json:"output"`
-		ProviderOptions map[string]json.RawMessage `json:"provider_options,omitempty"`
+		ToolCallID       string                     `json:"tool_call_id"`
+		Output           json.RawMessage            `json:"output"`
+		ProviderExecuted bool                       `json:"provider_executed,omitempty"`
+		ProviderOptions  map[string]json.RawMessage `json:"provider_options,omitempty"`
 	}
 
 	if err := json.Unmarshal(mpj.Data, &aux); err != nil {
@@ -747,6 +750,7 @@ func (t *ToolResultPart) UnmarshalJSON(data []byte) error {
 	}
 
 	t.ToolCallID = aux.ToolCallID
+	t.ProviderExecuted = aux.ProviderExecuted
 
 	// Unmarshal the Output field
 	output, err := UnmarshalToolResultOutputContent(aux.Output)

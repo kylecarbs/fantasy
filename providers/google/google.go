@@ -434,6 +434,12 @@ func toGooglePrompt(prompt fantasy.Prompt) (*genai.Content, []*genai.Content, []
 					if !ok {
 						continue
 					}
+					// Skip tool calls from provider-executed tools
+					// (e.g., GoogleSearch grounding). The provider
+					// handles these internally.
+					if toolCall.ProviderExecuted {
+						continue
+					}
 
 					var result map[string]any
 					err := json.Unmarshal([]byte(toolCall.Input), &result)
@@ -467,6 +473,11 @@ func toGooglePrompt(prompt fantasy.Prompt) (*genai.Content, []*genai.Content, []
 				case fantasy.ContentTypeToolResult:
 					result, ok := fantasy.AsMessagePart[fantasy.ToolResultPart](part)
 					if !ok {
+						continue
+					}
+					// Skip tool results from provider-executed tools
+					// (e.g., GoogleSearch grounding).
+					if result.ProviderExecuted {
 						continue
 					}
 					var toolCall fantasy.ToolCallPart

@@ -569,6 +569,11 @@ func toPrompt(prompt fantasy.Prompt, sendReasoningData bool) ([]anthropic.TextBl
 							anthropicContent = append(anthropicContent, anthropic.ContentBlockParamUnion{
 								OfText: textBlock,
 							})
+						case fantasy.ContentTypeSource:
+							// Source content from web search results is not
+							// a recognized Anthropic content block type; skip
+							// it.
+							continue
 						case fantasy.ContentTypeFile:
 							file, ok := fantasy.AsMessagePart[fantasy.FilePart](part)
 							if !ok {
@@ -596,6 +601,9 @@ func toPrompt(prompt fantasy.Prompt, sendReasoningData bool) ([]anthropic.TextBl
 						}
 						result, ok := fantasy.AsMessagePart[fantasy.ToolResultPart](part)
 						if !ok {
+							continue
+						}
+						if result.ProviderExecuted {
 							continue
 						}
 						toolResultBlock := anthropic.ToolResultBlockParam{
@@ -740,14 +748,19 @@ func toPrompt(prompt fantasy.Prompt, sendReasoningData bool) ([]anthropic.TextBl
 						}
 						anthropicContent = append(anthropicContent, toolUseBlock)
 					case fantasy.ContentTypeToolResult:
-						// TODO: implement provider executed tool result
+						result, ok := fantasy.AsMessagePart[fantasy.ToolResultPart](part)
+						if !ok || result.ProviderExecuted {
+							continue
+						}
+					case fantasy.ContentTypeSource:
+						// Source content from web search results is not a
+						// recognized Anthropic content block type; skip it.
+						continue
 					}
 				}
 			}
-
 			if !hasVisibleAssistantContent(anthropicContent) {
-				warnings = append(warnings, fantasy.CallWarning{
-					Type:    fantasy.CallWarningTypeOther,
+				warnings = append(warnings, fantasy.CallWarning{Type: fantasy.CallWarningTypeOther,
 					Message: "dropping empty assistant message (contains neither user-facing content nor tool calls)",
 				})
 				continue

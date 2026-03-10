@@ -600,9 +600,10 @@ func toResponseMessages(content []Content) []Message {
 				continue
 			}
 			toolParts = append(toolParts, ToolResultPart{
-				ToolCallID:      result.ToolCallID,
-				Output:          result.Result,
-				ProviderOptions: ProviderOptions(result.ProviderMetadata),
+				ToolCallID:       result.ToolCallID,
+				Output:           result.Result,
+				ProviderExecuted: result.ProviderExecuted,
+				ProviderOptions:  ProviderOptions(result.ProviderMetadata),
 			})
 		}
 	}
