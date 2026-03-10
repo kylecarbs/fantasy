@@ -1039,14 +1039,21 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 						return
 					}
 				case "web_search_tool_result":
-					// Emit source citations from web search results.
-					if !yield(fantasy.StreamPart{
-						Type:             fantasy.StreamPartTypeToolCall,
-						ID:               contentBlock.ID,
-						ToolCallName:     "web_search",
-						ProviderExecuted: true,
-					}) {
-						return
+					webSearchResult, ok := contentBlock.AsAny().(anthropic.WebSearchToolResultBlock)
+					if ok {
+						if items := webSearchResult.Content.OfWebSearchResultBlockArray; len(items) > 0 {
+							for _, item := range items {
+								if !yield(fantasy.StreamPart{
+									Type:       fantasy.StreamPartTypeSource,
+									ID:         item.URL,
+									SourceType: fantasy.SourceTypeURL,
+									URL:        item.URL,
+									Title:      item.Title,
+								}) {
+									return
+								}
+							}
+						}
 					}
 				}
 			case "content_block_delta":
