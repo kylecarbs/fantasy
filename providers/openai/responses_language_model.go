@@ -628,6 +628,32 @@ func toResponsesTools(tools []fantasy.Tool, toolChoice *fantasy.ToolChoice, opti
 			continue
 		}
 
+		if tool.GetType() == fantasy.ToolTypeProviderDefined {
+			pt, ok := tool.(fantasy.ProviderDefinedTool)
+			if !ok {
+				continue
+			}
+			switch pt.ID {
+			case "web_search":
+				webSearchTool := responses.WebSearchToolParam{
+					Type: responses.WebSearchToolTypeWebSearch,
+				}
+				if pt.Args != nil {
+					if size, ok := pt.Args["search_context_size"].(string); ok && size != "" {
+						webSearchTool.SearchContextSize = responses.WebSearchToolSearchContextSize(size)
+					}
+					if domains, ok := pt.Args["allowed_domains"].([]string); ok && len(domains) > 0 {
+						webSearchTool.Filters = responses.WebSearchToolFiltersParam{
+							AllowedDomains: domains,
+						}
+					}
+				}
+				openaiTools = append(openaiTools, responses.ToolUnionParam{
+					OfWebSearch: &webSearchTool,
+				})
+				continue
+			}
+		}
 		warnings = append(warnings, fantasy.CallWarning{
 			Type:    fantasy.CallWarningTypeUnsupportedTool,
 			Tool:    tool,
@@ -729,6 +755,13 @@ func (o responsesLanguageModel) Generate(ctx context.Context, call fantasy.Call)
 				ToolCallID:       outputItem.CallID,
 				ToolName:         outputItem.Name,
 				Input:            outputItem.Arguments,
+			})
+
+		case "web_search_call":
+			content = append(content, fantasy.ToolCallContent{
+				ToolCallID:       outputItem.ID,
+				ToolName:         "web_search",
+				ProviderExecuted: true,
 			})
 
 		case "reasoning":
@@ -851,6 +884,16 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 					if !yield(fantasy.StreamPart{
 						Type: fantasy.StreamPartTypeTextStart,
 						ID:   added.Item.ID,
+					}) {
+						return
+					}
+
+				case "web_search_call":
+					if !yield(fantasy.StreamPart{
+						Type:             fantasy.StreamPartTypeToolCall,
+						ID:               added.Item.ID,
+						ToolCallName:     "web_search",
+						ProviderExecuted: true,
 					}) {
 						return
 					}

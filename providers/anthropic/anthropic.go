@@ -431,7 +431,28 @@ func (a languageModel) toTools(tools []fantasy.Tool, toolChoice *fantasy.ToolCho
 			anthropicTools = append(anthropicTools, anthropic.ToolUnionParam{OfTool: &anthropicTool})
 			continue
 		}
-		// TODO: handle provider tool calls
+		if tool.GetType() == fantasy.ToolTypeProviderDefined {
+			pt, ok := tool.(fantasy.ProviderDefinedTool)
+			if !ok {
+				continue
+			}
+			switch pt.ID {
+			case "web_search":
+				webSearchTool := anthropic.WebSearchTool20250305Param{}
+				if pt.Args != nil {
+					if domains, ok := pt.Args["allowed_domains"].([]string); ok && len(domains) > 0 {
+						webSearchTool.AllowedDomains = domains
+					}
+					if domains, ok := pt.Args["blocked_domains"].([]string); ok && len(domains) > 0 {
+						webSearchTool.BlockedDomains = domains
+					}
+				}
+				anthropicTools = append(anthropicTools, anthropic.ToolUnionParam{
+					OfWebSearchTool20250305: &webSearchTool,
+				})
+				continue
+			}
+		}
 		warnings = append(warnings, fantasy.CallWarning{
 			Type:    fantasy.CallWarningTypeUnsupportedTool,
 			Tool:    tool,
@@ -827,6 +848,54 @@ func (a languageModel) Generate(ctx context.Context, call fantasy.Call) (*fantas
 				Input:            string(toolUse.Input),
 				ProviderExecuted: false,
 			})
+		case "server_tool_use":
+			serverToolUse, ok := block.AsAny().(anthropic.ServerToolUseBlock)
+			if !ok {
+				continue
+			}
+			var inputStr string
+			if b, err := json.Marshal(serverToolUse.Input); err == nil {
+				inputStr = string(b)
+			}
+			content = append(content, fantasy.ToolCallContent{
+				ToolCallID:       serverToolUse.ID,
+				ToolName:         string(serverToolUse.Name),
+				Input:            inputStr,
+				ProviderExecuted: true,
+			})
+		case "web_search_tool_result":
+			webSearchResult, ok := block.AsAny().(anthropic.WebSearchToolResultBlock)
+			if !ok {
+				continue
+			}
+			// Extract search results as sources/citations.
+			toolResult := fantasy.ToolResultContent{
+				ToolCallID:       webSearchResult.ToolUseID,
+				ToolName:         "web_search",
+				ProviderExecuted: true,
+			}
+			if items := webSearchResult.Content.OfWebSearchResultBlockArray; len(items) > 0 {
+				var text strings.Builder
+				for _, item := range items {
+					content = append(content, fantasy.SourceContent{
+						SourceType: fantasy.SourceTypeURL,
+						ID:         item.URL,
+						URL:        item.URL,
+						Title:      item.Title,
+					})
+					if item.EncryptedContent != "" {
+						text.WriteString(item.Title + ": " + item.URL + "\n")
+					}
+				}
+				toolResult.Result = fantasy.ToolResultOutputContentText{
+					Text: text.String(),
+				}
+			} else {
+				toolResult.Result = fantasy.ToolResultOutputContentText{
+					Text: "web search completed",
+				}
+			}
+			content = append(content, toolResult)
 		}
 	}
 
@@ -906,6 +975,16 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 					}) {
 						return
 					}
+				case "server_tool_use":
+					if !yield(fantasy.StreamPart{
+						Type:             fantasy.StreamPartTypeToolInputStart,
+						ID:               chunk.ContentBlock.ID,
+						ToolCallName:     string(chunk.ContentBlock.Name),
+						ToolCallInput:    "",
+						ProviderExecuted: true,
+					}) {
+						return
+					}
 				}
 			case "content_block_stop":
 				if len(acc.Content)-1 < int(chunk.Index) {
@@ -939,6 +1018,33 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 						ID:            contentBlock.ID,
 						ToolCallName:  contentBlock.Name,
 						ToolCallInput: string(contentBlock.Input),
+					}) {
+						return
+					}
+				case "server_tool_use":
+					if !yield(fantasy.StreamPart{
+						Type:             fantasy.StreamPartTypeToolInputEnd,
+						ID:               contentBlock.ID,
+						ProviderExecuted: true,
+					}) {
+						return
+					}
+					if !yield(fantasy.StreamPart{
+						Type:             fantasy.StreamPartTypeToolCall,
+						ID:               contentBlock.ID,
+						ToolCallName:     string(contentBlock.Name),
+						ToolCallInput:    string(contentBlock.Input),
+						ProviderExecuted: true,
+					}) {
+						return
+					}
+				case "web_search_tool_result":
+					// Emit source citations from web search results.
+					if !yield(fantasy.StreamPart{
+						Type:             fantasy.StreamPartTypeToolCall,
+						ID:               contentBlock.ID,
+						ToolCallName:     "web_search",
+						ProviderExecuted: true,
 					}) {
 						return
 					}

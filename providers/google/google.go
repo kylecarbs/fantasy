@@ -310,11 +310,22 @@ func (g languageModel) prepareParams(call fantasy.Call) (*genai.GenerateContentC
 	}
 
 	if len(call.Tools) > 0 {
-		tools, toolChoice, toolWarnings := toGoogleTools(call.Tools, call.ToolChoice)
+		tools, toolChoice, googleSearchEnabled, toolWarnings := toGoogleTools(call.Tools, call.ToolChoice)
 		config.ToolConfig = toolChoice
-		config.Tools = append(config.Tools, &genai.Tool{
-			FunctionDeclarations: tools,
-		})
+		if len(tools) > 0 || googleSearchEnabled {
+			var configTools []*genai.Tool
+			if len(tools) > 0 {
+				configTools = append(configTools, &genai.Tool{
+					FunctionDeclarations: tools,
+				})
+			}
+			if googleSearchEnabled {
+				configTools = append(configTools, &genai.Tool{
+					GoogleSearch: &genai.GoogleSearch{},
+				})
+			}
+			config.Tools = configTools
+		}
 		warnings = append(warnings, toolWarnings...)
 	}
 
@@ -815,6 +826,23 @@ func (g *languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.
 			if len(resp.Candidates) > 0 && resp.Candidates[0].FinishReason != "" {
 				lastFinishReason = mapFinishReason(resp.Candidates[0].FinishReason)
 			}
+
+			// Extract grounding metadata / web search citations.
+			if len(resp.Candidates) > 0 && resp.Candidates[0].GroundingMetadata != nil {
+				for _, chunk := range resp.Candidates[0].GroundingMetadata.GroundingChunks {
+					if chunk.Web != nil {
+						if !yield(fantasy.StreamPart{
+							Type:       fantasy.StreamPartTypeSource,
+							ID:         uuid.NewString(),
+							SourceType: fantasy.SourceTypeURL,
+							URL:        chunk.Web.URI,
+							Title:      chunk.Web.Title,
+						}) {
+							return
+						}
+					}
+				}
+			}
 		}
 
 		// Close any open blocks before finishing
@@ -1119,8 +1147,26 @@ func (g *languageModel) streamObjectWithJSONMode(ctx context.Context, call fanta
 	}, nil
 }
 
-func toGoogleTools(tools []fantasy.Tool, toolChoice *fantasy.ToolChoice) (googleTools []*genai.FunctionDeclaration, googleToolChoice *genai.ToolConfig, warnings []fantasy.CallWarning) {
+func toGoogleTools(tools []fantasy.Tool, toolChoice *fantasy.ToolChoice) (googleTools []*genai.FunctionDeclaration, googleToolChoice *genai.ToolConfig, googleSearchEnabled bool, warnings []fantasy.CallWarning) {
 	for _, tool := range tools {
+		if tool.GetType() == fantasy.ToolTypeProviderDefined {
+			pt, ok := tool.(fantasy.ProviderDefinedTool)
+			if !ok {
+				continue
+			}
+			switch pt.ID {
+			case "web_search":
+				googleSearchEnabled = true
+				continue
+			default:
+				warnings = append(warnings, fantasy.CallWarning{
+					Type:    fantasy.CallWarningTypeUnsupportedTool,
+					Tool:    tool,
+					Message: "provider-defined tool is not supported",
+				})
+				continue
+			}
+		}
 		if tool.GetType() == fantasy.ToolTypeFunction {
 			ft, ok := tool.(fantasy.FunctionTool)
 			if !ok {
@@ -1149,7 +1195,6 @@ func toGoogleTools(tools []fantasy.Tool, toolChoice *fantasy.ToolChoice) (google
 			googleTools = append(googleTools, declaration)
 			continue
 		}
-		// TODO: handle provider tool calls
 		warnings = append(warnings, fantasy.CallWarning{
 			Type:    fantasy.CallWarningTypeUnsupportedTool,
 			Tool:    tool,
@@ -1157,7 +1202,7 @@ func toGoogleTools(tools []fantasy.Tool, toolChoice *fantasy.ToolChoice) (google
 		})
 	}
 	if toolChoice == nil {
-		return googleTools, googleToolChoice, warnings
+		return googleTools, googleToolChoice, googleSearchEnabled, warnings
 	}
 	switch *toolChoice {
 	case fantasy.ToolChoiceAuto:
@@ -1188,7 +1233,7 @@ func toGoogleTools(tools []fantasy.Tool, toolChoice *fantasy.ToolChoice) (google
 			},
 		}
 	}
-	return googleTools, googleToolChoice, warnings
+	return googleTools, googleToolChoice, googleSearchEnabled, warnings
 }
 
 func convertSchemaProperties(parameters map[string]any) map[string]*genai.Schema {
@@ -1369,6 +1414,20 @@ func (g languageModel) mapResponse(response *genai.GenerateContentResponse, warn
 		default:
 			// Silently skip unknown part types instead of erroring
 			// This allows for forward compatibility with new part types
+		}
+	}
+
+	// Extract grounding metadata / web search citations.
+	if candidate.GroundingMetadata != nil {
+		for _, chunk := range candidate.GroundingMetadata.GroundingChunks {
+			if chunk.Web != nil {
+				content = append(content, fantasy.SourceContent{
+					SourceType: fantasy.SourceTypeURL,
+					ID:         uuid.NewString(),
+					URL:        chunk.Web.URI,
+					Title:      chunk.Web.Title,
+				})
+			}
 		}
 	}
 
