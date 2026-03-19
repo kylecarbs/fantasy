@@ -560,35 +560,17 @@ func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string) (respons
 					// recognised Responses API input type; skip.
 					continue
 				case fantasy.ContentTypeReasoning:
-					reasoningMetadata := GetReasoningMetadata(c.Options())
-					if reasoningMetadata == nil || reasoningMetadata.ItemID == "" {
-						continue
-					}
-					if len(reasoningMetadata.Summary) == 0 && reasoningMetadata.EncryptedContent == nil {
-						warnings = append(warnings, fantasy.CallWarning{
-							Type:    fantasy.CallWarningTypeOther,
-							Message: "assistant message reasoning part does is empty",
-						})
-						continue
-					}
-					// we want to always send an empty array
-					summary := make([]responses.ResponseReasoningItemSummaryParam, 0, len(reasoningMetadata.Summary))
-					for _, s := range reasoningMetadata.Summary {
-						summary = append(summary, responses.ResponseReasoningItemSummaryParam{
-							Type: "summary_text",
-							Text: s,
-						})
-					}
-					reasoning := &responses.ResponseReasoningItemParam{
-						ID:      reasoningMetadata.ItemID,
-						Summary: summary,
-					}
-					if reasoningMetadata.EncryptedContent != nil {
-						reasoning.EncryptedContent = param.NewOpt(*reasoningMetadata.EncryptedContent)
-					}
-					input = append(input, responses.ResponseInputItemUnionParam{
-						OfReasoning: reasoning,
-					})
+					// Reasoning items from stored responses cannot be
+					// replayed in the Responses API input. With Store
+					// enabled the API already has the reasoning persisted
+					// server-side; replaying the full OfReasoning item
+					// causes a validation error ("reasoning was provided
+					// without its required following item") because the
+					// API cannot pair the reconstructed reasoning with
+					// the output item that followed it. Skip reasoning
+					// parts and let the conversation continue with the
+					// visible assistant content (text / tool calls).
+					continue
 				}
 			}
 
