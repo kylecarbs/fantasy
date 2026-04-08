@@ -15,6 +15,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMapAnthropicUsage(t *testing.T) {
+	t.Parallel()
+
+	u := anthropic.Usage{
+		InputTokens:              200,
+		OutputTokens:             75,
+		CacheCreationInputTokens: 30,
+		CacheReadInputTokens:     150,
+	}
+	got := mapAnthropicUsage(u)
+
+	require.Equal(t, int64(200), got.InputTokens)
+	require.Equal(t, int64(75), got.OutputTokens)
+	require.Equal(t, int64(275), got.TotalTokens)
+	require.Equal(t, int64(30), got.CacheCreationTokens)
+	require.Equal(t, int64(150), got.CacheReadTokens)
+}
+
 func TestToPrompt_DropsEmptyMessages(t *testing.T) {
 	t.Parallel()
 

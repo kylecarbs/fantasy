@@ -525,7 +525,7 @@ func (a languageModel) toTools(tools []fantasy.Tool, toolChoice *fantasy.ToolCho
 			Tool:    tool,
 			Message: "tool is not supported",
 		})
-		}
+	}
 	// NOTE: Bedrock does not support this attribute.
 	var disableParallelToolUse param.Opt[bool]
 	if !a.options.useBedrock {
@@ -913,6 +913,20 @@ func mapFinishReason(finishReason string) fantasy.FinishReason {
 	}
 }
 
+// mapAnthropicUsage converts Anthropic SDK usage to fantasy.Usage.
+// TotalTokens is computed as InputTokens + OutputTokens, which represents
+// the non-cached token count. Cache tokens are tracked separately in
+// CacheCreationTokens and CacheReadTokens.
+func mapAnthropicUsage(u anthropic.Usage) fantasy.Usage {
+	return fantasy.Usage{
+		InputTokens:         u.InputTokens,
+		OutputTokens:        u.OutputTokens,
+		TotalTokens:         u.InputTokens + u.OutputTokens,
+		CacheCreationTokens: u.CacheCreationInputTokens,
+		CacheReadTokens:     u.CacheReadInputTokens,
+	}
+}
+
 // Generate implements fantasy.LanguageModel.
 func (a languageModel) Generate(ctx context.Context, call fantasy.Call) (*fantasy.Response, error) {
 	params, rawTools, warnings, err := a.prepareParams(call)
@@ -1038,14 +1052,8 @@ func (a languageModel) Generate(ctx context.Context, call fantasy.Call) (*fantas
 	}
 
 	return &fantasy.Response{
-		Content: content,
-		Usage: fantasy.Usage{
-			InputTokens:         response.Usage.InputTokens,
-			OutputTokens:        response.Usage.OutputTokens,
-			TotalTokens:         response.Usage.InputTokens + response.Usage.OutputTokens,
-			CacheCreationTokens: response.Usage.CacheCreationInputTokens,
-			CacheReadTokens:     response.Usage.CacheReadInputTokens,
-		},
+		Content:          content,
+		Usage:            mapAnthropicUsage(response.Usage),
 		FinishReason:     mapFinishReason(string(response.StopReason)),
 		ProviderMetadata: fantasy.ProviderMetadata{},
 		Warnings:         warnings,
@@ -1283,16 +1291,10 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 		err := stream.Err()
 		if err == nil || errors.Is(err, io.EOF) {
 			yield(fantasy.StreamPart{
-				Type:         fantasy.StreamPartTypeFinish,
-				ID:           acc.ID,
-				FinishReason: mapFinishReason(string(acc.StopReason)),
-				Usage: fantasy.Usage{
-					InputTokens:         acc.Usage.InputTokens,
-					OutputTokens:        acc.Usage.OutputTokens,
-					TotalTokens:         acc.Usage.InputTokens + acc.Usage.OutputTokens,
-					CacheCreationTokens: acc.Usage.CacheCreationInputTokens,
-					CacheReadTokens:     acc.Usage.CacheReadInputTokens,
-				},
+				Type:             fantasy.StreamPartTypeFinish,
+				ID:               acc.ID,
+				FinishReason:     mapFinishReason(string(acc.StopReason)),
+				Usage:            mapAnthropicUsage(acc.Usage),
 				ProviderMetadata: fantasy.ProviderMetadata{},
 			})
 			return
