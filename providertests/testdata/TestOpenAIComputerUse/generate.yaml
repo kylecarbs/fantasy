@@ -1,0 +1,326 @@
+---
+version: 2
+interactions:
+- id: 0
+  request:
+    proto: HTTP/1.1
+    proto_major: 1
+    proto_minor: 1
+    content_length: 363
+    host: ""
+    body: '{"max_output_tokens":4000,"store":false,"input":[{"content":"You are a helpful assistant that can control a computer. Take a screenshot when asked.","role":"developer"},{"content":[{"text":"Take a screenshot of the desktop","type":"input_text"}],"role":"user"}],"model":"gpt-5.4","reasoning":{"effort":"medium"},"tool_choice":"auto","tools":[{"type":"computer"}]}'
+    headers:
+      Accept:
+      - application/json
+      Content-Type:
+      - application/json
+      User-Agent:
+      - Charm-Fantasy/0.17.1 (https://charm.land/fantasy)
+    url: https://api.openai.com/v1/responses
+    method: POST
+  response:
+    proto: HTTP/2.0
+    proto_major: 2
+    proto_minor: 0
+    content_length: -1
+    uncompressed: true
+    body: |-
+      {
+        "id": "resp_01e179cdc6a4e4220169ef47903798819798dd7661e3b71ccb",
+        "object": "response",
+        "created_at": 1777289104,
+        "status": "completed",
+        "background": false,
+        "billing": {
+          "payer": "developer"
+        },
+        "completed_at": 1777289107,
+        "error": null,
+        "frequency_penalty": 0.0,
+        "incomplete_details": null,
+        "instructions": null,
+        "max_output_tokens": 4000,
+        "max_tool_calls": null,
+        "model": "gpt-5.4-2026-03-05",
+        "moderation": null,
+        "output": [
+          {
+            "id": "rs_01e179cdc6a4e4220169ef4791901c81979efaf855abb63635",
+            "type": "reasoning",
+            "summary": []
+          },
+          {
+            "id": "cu_01e179cdc6a4e4220169ef479280c8819791217df53c51c009",
+            "type": "computer_call",
+            "status": "completed",
+            "actions": [
+              {
+                "type": "screenshot"
+              }
+            ],
+            "call_id": "call_aUrRyRAdVraG9rucq9o6tUhU"
+          }
+        ],
+        "parallel_tool_calls": true,
+        "presence_penalty": 0.0,
+        "previous_response_id": null,
+        "prompt_cache_key": null,
+        "prompt_cache_retention": "in_memory",
+        "reasoning": {
+          "effort": "medium",
+          "summary": null
+        },
+        "safety_identifier": null,
+        "service_tier": "default",
+        "store": false,
+        "temperature": 1.0,
+        "text": {
+          "format": {
+            "type": "text"
+          },
+          "verbosity": "medium"
+        },
+        "tool_choice": "auto",
+        "tools": [
+          {
+            "type": "computer"
+          }
+        ],
+        "top_logprobs": 0,
+        "top_p": 0.98,
+        "truncation": "disabled",
+        "usage": {
+          "input_tokens": 844,
+          "input_tokens_details": {
+            "cached_tokens": 0
+          },
+          "output_tokens": 67,
+          "output_tokens_details": {
+            "reasoning_tokens": 50
+          },
+          "total_tokens": 911
+        },
+        "user": null,
+        "metadata": {}
+      }
+    headers:
+      Content-Type:
+      - application/json
+    status: 200 OK
+    code: 200
+    duration: 4.144962039s
+- id: 1
+  request:
+    proto: HTTP/1.1
+    proto_major: 1
+    proto_minor: 1
+    content_length: 793
+    host: ""
+    body: '{"max_output_tokens":4000,"store":false,"input":[{"content":"You are a helpful assistant that can control a computer. Take a screenshot when asked.","role":"developer"},{"content":[{"text":"Take a screenshot of the desktop","type":"input_text"}],"role":"user"},{"id":"cu_01e179cdc6a4e4220169ef479280c8819791217df53c51c009","type":"computer_call","status":"completed","actions":[{"type":"screenshot"}],"call_id":"call_aUrRyRAdVraG9rucq9o6tUhU"},{"call_id":"call_aUrRyRAdVraG9rucq9o6tUhU","output":{"image_url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==","type":"computer_screenshot"},"type":"computer_call_output"}],"model":"gpt-5.4","reasoning":{"effort":"medium"},"tool_choice":"auto","tools":[{"type":"computer"}]}'
+    headers:
+      Accept:
+      - application/json
+      Content-Type:
+      - application/json
+      User-Agent:
+      - Charm-Fantasy/0.17.1 (https://charm.land/fantasy)
+    url: https://api.openai.com/v1/responses
+    method: POST
+  response:
+    proto: HTTP/2.0
+    proto_major: 2
+    proto_minor: 0
+    content_length: -1
+    uncompressed: true
+    body: |-
+      {
+        "id": "resp_01e179cdc6a4e4220169ef47944888819781c1afaeb092f20c",
+        "object": "response",
+        "created_at": 1777289108,
+        "status": "completed",
+        "background": false,
+        "billing": {
+          "payer": "developer"
+        },
+        "completed_at": 1777289110,
+        "error": null,
+        "frequency_penalty": 0.0,
+        "incomplete_details": null,
+        "instructions": null,
+        "max_output_tokens": 4000,
+        "max_tool_calls": null,
+        "model": "gpt-5.4-2026-03-05",
+        "moderation": null,
+        "output": [
+          {
+            "id": "rs_01e179cdc6a4e4220169ef4794e1dc81978e9c63220fbaf9a9",
+            "type": "reasoning",
+            "summary": []
+          },
+          {
+            "id": "cu_01e179cdc6a4e4220169ef4795f9708197b1db04c2b2598485",
+            "type": "computer_call",
+            "status": "completed",
+            "actions": [
+              {
+                "type": "screenshot"
+              }
+            ],
+            "call_id": "call_pZmOBrSajdj42qGtJfzfhz96"
+          }
+        ],
+        "parallel_tool_calls": true,
+        "presence_penalty": 0.0,
+        "previous_response_id": null,
+        "prompt_cache_key": null,
+        "prompt_cache_retention": "in_memory",
+        "reasoning": {
+          "effort": "medium",
+          "summary": null
+        },
+        "safety_identifier": null,
+        "service_tier": "default",
+        "store": false,
+        "temperature": 1.0,
+        "text": {
+          "format": {
+            "type": "text"
+          },
+          "verbosity": "medium"
+        },
+        "tool_choice": "auto",
+        "tools": [
+          {
+            "type": "computer"
+          }
+        ],
+        "top_logprobs": 0,
+        "top_p": 0.98,
+        "truncation": "disabled",
+        "usage": {
+          "input_tokens": 862,
+          "input_tokens_details": {
+            "cached_tokens": 0
+          },
+          "output_tokens": 70,
+          "output_tokens_details": {
+            "reasoning_tokens": 53
+          },
+          "total_tokens": 932
+        },
+        "user": null,
+        "metadata": {}
+      }
+    headers:
+      Content-Type:
+      - application/json
+    status: 200 OK
+    code: 200
+    duration: 2.653717068s
+- id: 2
+  request:
+    proto: HTTP/1.1
+    proto_major: 1
+    proto_minor: 1
+    content_length: 1223
+    host: ""
+    body: '{"max_output_tokens":4000,"store":false,"input":[{"content":"You are a helpful assistant that can control a computer. Take a screenshot when asked.","role":"developer"},{"content":[{"text":"Take a screenshot of the desktop","type":"input_text"}],"role":"user"},{"id":"cu_01e179cdc6a4e4220169ef479280c8819791217df53c51c009","type":"computer_call","status":"completed","actions":[{"type":"screenshot"}],"call_id":"call_aUrRyRAdVraG9rucq9o6tUhU"},{"call_id":"call_aUrRyRAdVraG9rucq9o6tUhU","output":{"image_url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==","type":"computer_screenshot"},"type":"computer_call_output"},{"id":"cu_01e179cdc6a4e4220169ef4795f9708197b1db04c2b2598485","type":"computer_call","status":"completed","actions":[{"type":"screenshot"}],"call_id":"call_pZmOBrSajdj42qGtJfzfhz96"},{"call_id":"call_pZmOBrSajdj42qGtJfzfhz96","output":{"image_url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==","type":"computer_screenshot"},"type":"computer_call_output"}],"model":"gpt-5.4","reasoning":{"effort":"medium"},"tool_choice":"auto","tools":[{"type":"computer"}]}'
+    headers:
+      Accept:
+      - application/json
+      Content-Type:
+      - application/json
+      User-Agent:
+      - Charm-Fantasy/0.17.1 (https://charm.land/fantasy)
+    url: https://api.openai.com/v1/responses
+    method: POST
+  response:
+    proto: HTTP/2.0
+    proto_major: 2
+    proto_minor: 0
+    content_length: -1
+    uncompressed: true
+    body: |-
+      {
+        "id": "resp_01e179cdc6a4e4220169ef479680d081979251cdbf542aaea1",
+        "object": "response",
+        "created_at": 1777289110,
+        "status": "completed",
+        "background": false,
+        "billing": {
+          "payer": "developer"
+        },
+        "completed_at": 1777289111,
+        "error": null,
+        "frequency_penalty": 0.0,
+        "incomplete_details": null,
+        "instructions": null,
+        "max_output_tokens": 4000,
+        "max_tool_calls": null,
+        "model": "gpt-5.4-2026-03-05",
+        "moderation": null,
+        "output": [
+          {
+            "id": "msg_01e179cdc6a4e4220169ef4797065c8197a483a14775a50dbb",
+            "type": "message",
+            "status": "completed",
+            "content": [
+              {
+                "type": "output_text",
+                "annotations": [],
+                "logprobs": [],
+                "text": "Here is the current desktop screenshot ."
+              }
+            ],
+            "phase": "final_answer",
+            "role": "assistant"
+          }
+        ],
+        "parallel_tool_calls": true,
+        "presence_penalty": 0.0,
+        "previous_response_id": null,
+        "prompt_cache_key": null,
+        "prompt_cache_retention": "in_memory",
+        "reasoning": {
+          "effort": "medium",
+          "summary": null
+        },
+        "safety_identifier": null,
+        "service_tier": "default",
+        "store": false,
+        "temperature": 1.0,
+        "text": {
+          "format": {
+            "type": "text"
+          },
+          "verbosity": "medium"
+        },
+        "tool_choice": "auto",
+        "tools": [
+          {
+            "type": "computer"
+          }
+        ],
+        "top_logprobs": 0,
+        "top_p": 0.98,
+        "truncation": "disabled",
+        "usage": {
+          "input_tokens": 891,
+          "input_tokens_details": {
+            "cached_tokens": 0
+          },
+          "output_tokens": 21,
+          "output_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "total_tokens": 912
+        },
+        "user": null,
+        "metadata": {}
+      }
+    headers:
+      Content-Type:
+      - application/json
+    status: 200 OK
+    code: 200
+    duration: 1.29512976s
