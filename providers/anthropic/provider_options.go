@@ -188,6 +188,34 @@ type CacheControl struct {
 	Type string `json:"type"`
 }
 
+// MessageCacheKey is the provider-options key used to pass a
+// MessageSerializationCache through fantasy.Call.
+const MessageCacheKey = Name + ".message_cache"
+
+// MessageSerializationCache allows pre-serialized message JSON to
+// be reused across agentic loop steps. The cache is keyed by output
+// MessageParam index. Implementations need not be safe for
+// concurrent use.
+type MessageSerializationCache interface {
+	Get(index int) (json.RawMessage, bool)
+	Set(index int, data json.RawMessage)
+	Clear()
+}
+
+// GetMessageCache extracts a MessageSerializationCache from
+// provider options, if present.
+func GetMessageCache(providerOptions fantasy.ProviderOptions) MessageSerializationCache {
+	v, ok := providerOptions[MessageCacheKey]
+	if !ok {
+		return nil
+	}
+	cache, ok := v.(MessageSerializationCache)
+	if !ok {
+		return nil
+	}
+	return cache
+}
+
 // NewProviderOptions creates new provider options for the Anthropic provider.
 func NewProviderOptions(opts *ProviderOptions) fantasy.ProviderOptions {
 	return fantasy.ProviderOptions{

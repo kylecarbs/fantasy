@@ -51,7 +51,7 @@ func TestToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		systemBlocks, messages, warnings := toPrompt(prompt, true)
+		systemBlocks, messages, warnings := toPrompt(prompt, true, nil)
 
 		require.Empty(t, systemBlocks)
 		require.Len(t, messages, 1, "should only have user message, assistant message should be dropped")
@@ -86,7 +86,7 @@ func TestToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		systemBlocks, messages, warnings := toPrompt(prompt, false)
+		systemBlocks, messages, warnings := toPrompt(prompt, false, nil)
 
 		require.Empty(t, systemBlocks)
 		require.Len(t, messages, 1, "should only have user message, assistant message should be dropped")
@@ -113,7 +113,7 @@ func TestToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		systemBlocks, messages, warnings := toPrompt(prompt, true)
+		systemBlocks, messages, warnings := toPrompt(prompt, true, nil)
 
 		require.Empty(t, systemBlocks)
 		require.Len(t, messages, 1, "should only have user message")
@@ -140,7 +140,7 @@ func TestToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		systemBlocks, messages, warnings := toPrompt(prompt, true)
+		systemBlocks, messages, warnings := toPrompt(prompt, true, nil)
 
 		require.Empty(t, systemBlocks)
 		require.Len(t, messages, 2, "should have both user and assistant messages")
@@ -169,7 +169,7 @@ func TestToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		systemBlocks, messages, warnings := toPrompt(prompt, true)
+		systemBlocks, messages, warnings := toPrompt(prompt, true, nil)
 
 		require.Empty(t, systemBlocks)
 		require.Len(t, messages, 2, "should have both user and assistant messages")
@@ -198,7 +198,7 @@ func TestToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		systemBlocks, messages, warnings := toPrompt(prompt, true)
+		systemBlocks, messages, warnings := toPrompt(prompt, true, nil)
 
 		require.Empty(t, systemBlocks)
 		require.Len(t, messages, 1, "should only have user message")
@@ -233,7 +233,7 @@ func TestToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		systemBlocks, messages, warnings := toPrompt(prompt, true)
+		systemBlocks, messages, warnings := toPrompt(prompt, true, nil)
 
 		require.Empty(t, systemBlocks)
 		require.Len(t, messages, 2, "should have both user and assistant messages")
@@ -255,7 +255,7 @@ func TestToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		systemBlocks, messages, warnings := toPrompt(prompt, true)
+		systemBlocks, messages, warnings := toPrompt(prompt, true, nil)
 
 		require.Empty(t, systemBlocks)
 		require.Len(t, messages, 1)
@@ -277,7 +277,7 @@ func TestToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		systemBlocks, messages, warnings := toPrompt(prompt, true)
+		systemBlocks, messages, warnings := toPrompt(prompt, true, nil)
 
 		require.Empty(t, systemBlocks)
 		require.Empty(t, messages)
@@ -302,7 +302,7 @@ func TestToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		systemBlocks, messages, warnings := toPrompt(prompt, true)
+		systemBlocks, messages, warnings := toPrompt(prompt, true, nil)
 
 		require.Empty(t, systemBlocks)
 		require.Len(t, messages, 1)
@@ -324,7 +324,7 @@ func TestToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		systemBlocks, messages, warnings := toPrompt(prompt, true)
+		systemBlocks, messages, warnings := toPrompt(prompt, true, nil)
 
 		require.Empty(t, systemBlocks)
 		require.Len(t, messages, 1)
@@ -349,7 +349,7 @@ func TestToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		systemBlocks, messages, warnings := toPrompt(prompt, true)
+		systemBlocks, messages, warnings := toPrompt(prompt, true, nil)
 
 		require.Empty(t, systemBlocks)
 		require.Len(t, messages, 1)
@@ -741,7 +741,7 @@ func TestToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 		},
 	}
 
-	_, messages, warnings := toPrompt(prompt, true)
+	_, messages, warnings := toPrompt(prompt, true, nil)
 
 	// No warnings expected; the provider-executed result is in the
 	// assistant message so there is no empty tool message to drop.

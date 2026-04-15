@@ -286,7 +286,7 @@ func (a languageModel) prepareParams(call fantasy.Call) (
 	if providerOptions.SendReasoning != nil {
 		sendReasoning = *providerOptions.SendReasoning
 	}
-	systemBlocks, messages, warnings := toPrompt(call.Prompt, sendReasoning)
+	systemBlocks, messages, warnings := toPrompt(call.Prompt, sendReasoning, GetMessageCache(call.ProviderOptions))
 
 	if call.FrequencyPenalty != nil {
 		warnings = append(warnings, fantasy.CallWarning{
@@ -760,7 +760,7 @@ func (a languageModel) toTools(tools []fantasy.Tool, toolChoice *fantasy.ToolCho
 	return rawTools, anthropicToolChoice, warnings, betaFlags
 }
 
-func toPrompt(prompt fantasy.Prompt, sendReasoningData bool) ([]anthropic.TextBlockParam, []anthropic.MessageParam, []fantasy.CallWarning) {
+func toPrompt(prompt fantasy.Prompt, sendReasoningData bool, cache MessageSerializationCache) ([]anthropic.TextBlockParam, []anthropic.MessageParam, []fantasy.CallWarning) {
 	var systemBlocks []anthropic.TextBlockParam
 	var messages []anthropic.MessageParam
 	var warnings []fantasy.CallWarning
@@ -799,6 +799,7 @@ func toPrompt(prompt fantasy.Prompt, sendReasoningData bool) ([]anthropic.TextBl
 
 		case fantasy.MessageRoleUser:
 			var anthropicContent []anthropic.ContentBlockParamUnion
+			blockHasCacheControl := false
 			for _, msg := range block.Messages {
 				if msg.Role == fantasy.MessageRoleUser {
 					for i, part := range msg.Content {
@@ -806,6 +807,9 @@ func toPrompt(prompt fantasy.Prompt, sendReasoningData bool) ([]anthropic.TextBl
 						cacheControl := GetCacheControl(part.Options())
 						if cacheControl == nil && isLastPart {
 							cacheControl = GetCacheControl(msg.ProviderOptions)
+						}
+						if cacheControl != nil {
+							blockHasCacheControl = true
 						}
 						switch part.GetType() {
 						case fantasy.ContentTypeText:
@@ -854,6 +858,9 @@ func toPrompt(prompt fantasy.Prompt, sendReasoningData bool) ([]anthropic.TextBl
 						cacheControl := GetCacheControl(part.Options())
 						if cacheControl == nil && isLastPart {
 							cacheControl = GetCacheControl(msg.ProviderOptions)
+						}
+						if cacheControl != nil {
+							blockHasCacheControl = true
 						}
 						result, ok := fantasy.AsMessagePart[fantasy.ToolResultPart](part)
 						if !ok {
@@ -923,15 +930,21 @@ func toPrompt(prompt fantasy.Prompt, sendReasoningData bool) ([]anthropic.TextBl
 				})
 				continue
 			}
-			messages = append(messages, anthropic.NewUserMessage(anthropicContent...))
+			outIdx := len(messages)
+			msgParam := anthropic.NewUserMessage(anthropicContent...)
+			messages = append(messages, applySerialisationCache(cache, outIdx, blockHasCacheControl, msgParam))
 		case fantasy.MessageRoleAssistant:
 			var anthropicContent []anthropic.ContentBlockParamUnion
+			blockHasCacheControl := false
 			for _, msg := range block.Messages {
 				for i, part := range msg.Content {
 					isLastPart := i == len(msg.Content)-1
 					cacheControl := GetCacheControl(part.Options())
 					if cacheControl == nil && isLastPart {
 						cacheControl = GetCacheControl(msg.ProviderOptions)
+					}
+					if cacheControl != nil {
+						blockHasCacheControl = true
 					}
 					switch part.GetType() {
 					case fantasy.ContentTypeText:
@@ -1042,10 +1055,43 @@ func toPrompt(prompt fantasy.Prompt, sendReasoningData bool) ([]anthropic.TextBl
 				})
 				continue
 			}
-			messages = append(messages, anthropic.NewAssistantMessage(anthropicContent...))
+			outIdx := len(messages)
+			msgParam := anthropic.NewAssistantMessage(anthropicContent...)
+			messages = append(messages, applySerialisationCache(cache, outIdx, blockHasCacheControl, msgParam))
 		}
 	}
 	return systemBlocks, messages, warnings
+}
+
+// applySerialisationCache applies cache-based serialisation to a
+// MessageParam. When the cache is nil or the block has cache
+// control directives (which change between calls), the message is
+// returned unmodified. On a cache hit the pre-serialised JSON is
+// applied via param.SetJSON. On a miss the message is serialised,
+// stored, and then param.SetJSON is applied so the SDK skips
+// re-serialisation.
+func applySerialisationCache(
+	cache MessageSerializationCache,
+	idx int,
+	hasCacheControl bool,
+	msg anthropic.MessageParam,
+) anthropic.MessageParam {
+	if cache == nil || hasCacheControl {
+		return msg
+	}
+	if cached, ok := cache.Get(idx); ok {
+		param.SetJSON(cached, &msg)
+		return msg
+	}
+	data, err := msg.MarshalJSON()
+	if err != nil {
+		// Serialisation should never fail for well-formed params.
+		// Fall through without caching.
+		return msg
+	}
+	cache.Set(idx, data)
+	param.SetJSON(data, &msg)
+	return msg
 }
 
 func hasVisibleUserContent(content []anthropic.ContentBlockParamUnion) bool {
