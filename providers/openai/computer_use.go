@@ -264,6 +264,9 @@ func parseComputerUseAction(input []byte) (ComputerUseAction, error) {
 }
 
 // NewComputerUseScreenshotResult returns a screenshot tool result with PNG data.
+// Screenshot and media outputs are the only computer-use tool results that
+// round-trip through the OpenAI Responses API. Use this helper for OpenAI
+// computer-use submissions.
 func NewComputerUseScreenshotResult(toolCallID string, screenshotPNG []byte) fantasy.ToolResultPart {
 	return fantasy.ToolResultPart{
 		ToolCallID: toolCallID,
@@ -275,7 +278,9 @@ func NewComputerUseScreenshotResult(toolCallID string, screenshotPNG []byte) fan
 }
 
 // NewComputerUseScreenshotResultWithMediaType returns a screenshot tool result
-// with caller-provided base64 data and media type.
+// with caller-provided base64 data and media type. Like
+// NewComputerUseScreenshotResult, this round-trips through OpenAI Responses
+// computer-use because it produces media output.
 func NewComputerUseScreenshotResultWithMediaType(
 	toolCallID string,
 	base64Data string,
@@ -291,6 +296,9 @@ func NewComputerUseScreenshotResultWithMediaType(
 }
 
 // NewComputerUseErrorResult returns an error tool result.
+// OpenAI Responses computer-use does not accept this output format on replay.
+// Use it for local display, logging, or other non-OpenAI flows that want to
+// preserve the failure alongside the tool call ID.
 func NewComputerUseErrorResult(toolCallID string, err error) fantasy.ToolResultPart {
 	return fantasy.ToolResultPart{
 		ToolCallID: toolCallID,
@@ -301,6 +309,9 @@ func NewComputerUseErrorResult(toolCallID string, err error) fantasy.ToolResultP
 }
 
 // NewComputerUseTextResult returns a text tool result.
+// OpenAI Responses computer-use does not accept this output format on replay.
+// Use it for local display, logging, or tests that need to keep a textual
+// association with the original tool call ID.
 func NewComputerUseTextResult(toolCallID string, text string) fantasy.ToolResultPart {
 	return fantasy.ToolResultPart{
 		ToolCallID: toolCallID,
