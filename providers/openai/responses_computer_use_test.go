@@ -339,7 +339,7 @@ func TestResponsesGenerate_ComputerUseResponse(t *testing.T) {
 		ProviderOptions: fantasy.ProviderOptions{
 			Name: &ResponsesProviderOptions{Store: fantasy.Opt(true)},
 		},
-		Tools: []fantasy.Tool{fantasy.ProviderDefinedTool{ID: computerUseToolID, Name: computerUseAPIName}},
+		Tools: []fantasy.Tool{testComputerUseToolDefinition()},
 	})
 	require.NoError(t, err)
 	require.Equal(t, "/responses", server.calls[0].path)
@@ -384,7 +384,7 @@ func TestResponsesStream_ComputerUseResponse(t *testing.T) {
 		ProviderOptions: fantasy.ProviderOptions{
 			Name: &ResponsesProviderOptions{Store: fantasy.Opt(true)},
 		},
-		Tools: []fantasy.Tool{fantasy.ProviderDefinedTool{ID: computerUseToolID, Name: computerUseAPIName}},
+		Tools: []fantasy.Tool{testComputerUseToolDefinition()},
 	})
 	require.NoError(t, err)
 
@@ -481,6 +481,18 @@ func assertComputerUseToolCall(t *testing.T, toolCall fantasy.ToolCallContent, w
 	require.Equal(t, "safe_01", metadata.PendingSafetyChecks[0].ID)
 	require.Equal(t, "account_access", metadata.PendingSafetyChecks[0].Code)
 	require.Equal(t, "Confirm access.", metadata.PendingSafetyChecks[0].Message)
+}
+
+func testComputerUseToolDefinition() fantasy.ProviderDefinedTool {
+	return fantasy.ProviderDefinedTool{
+		ID:   computerUseToolID,
+		Name: computerUseAPIName,
+		Args: map[string]any{
+			"display_width_px":  int64(1024),
+			"display_height_px": int64(768),
+			"environment":       responses.ComputerUsePreviewToolEnvironmentBrowser,
+		},
+	}
 }
 
 func computerUseCassettePaths(t *testing.T, modelName string) []string {
