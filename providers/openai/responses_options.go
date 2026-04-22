@@ -4,7 +4,6 @@ package openai
 import (
 	"encoding/json"
 	"slices"
-	"strings"
 
 	"charm.land/fantasy"
 )
@@ -259,6 +258,8 @@ var responsesModelIDs = append([]string{
 	"gpt-3.5-turbo-1106",
 	"chatgpt-4o-latest",
 	"gpt-5-chat-latest",
+	"computer-use-preview",
+	"computer-use-preview-2025-03-11",
 }, responsesReasoningModelIDs...)
 
 // NewResponsesProviderOptions creates new provider options for OpenAI Responses API.
@@ -279,7 +280,7 @@ func ParseResponsesOptions(data map[string]any) (*ResponsesProviderOptions, erro
 
 // IsResponsesModel checks if a model ID is a Responses API model for OpenAI.
 func IsResponsesModel(modelID string) bool {
-	return slices.Contains(responsesModelIDs, modelID) || strings.Contains(modelID, "computer-use")
+	return slices.Contains(responsesModelIDs, modelID)
 }
 
 // IsResponsesReasoningModel checks if a model ID is a Responses API reasoning model for OpenAI.

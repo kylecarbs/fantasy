@@ -17,7 +17,8 @@ func TestIsResponsesModel_ComputerUse(t *testing.T) {
 	require.True(t, IsResponsesModel("gpt-4o"))
 	require.True(t, IsResponsesModel("computer-use-preview"))
 	require.True(t, IsResponsesModel("computer-use-preview-2025-03-11"))
-	require.True(t, IsResponsesModel("acme-computer-use-preview"))
+	require.False(t, IsResponsesModel("acme-computer-use-preview"))
+	require.False(t, IsResponsesModel("not-a-computer-use-model"))
 	require.False(t, IsResponsesModel("not-a-responses-model"))
 }
 
