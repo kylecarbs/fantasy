@@ -166,6 +166,13 @@ func TestParseComputerUseInput(t *testing.T) {
 		require.Equal(t, "left", clickAction.Button)
 	})
 
+	t.Run("empty batched actions error", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := ParseComputerUseInput([]byte(`[]`))
+		require.EqualError(t, err, "openai computer use input requires at least one action")
+	})
+
 	t.Run("unknown action errors", func(t *testing.T) {
 		t.Parallel()
 

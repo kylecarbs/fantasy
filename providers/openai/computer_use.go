@@ -202,6 +202,9 @@ func ParseComputerUseInput(input []byte) (ComputerUseInput, error) {
 		if err := json.Unmarshal(trimmed, &rawActions); err != nil {
 			return ComputerUseInput{}, err
 		}
+		if len(rawActions) == 0 {
+			return ComputerUseInput{}, fmt.Errorf("openai computer use input requires at least one action")
+		}
 		actions := make([]ComputerUseAction, 0, len(rawActions))
 		for _, rawAction := range rawActions {
 			action, err := parseComputerUseAction(rawAction)
