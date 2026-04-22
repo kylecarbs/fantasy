@@ -230,37 +230,44 @@ var responsesReasoningModelIDs = []string{
 	"gpt-oss-120b",
 }
 
-// responsesModelIds lists all model IDs for OpenAI Responses API.
-var responsesModelIDs = append([]string{
-	"gpt-4.1",
-	"gpt-4.1-2025-04-14",
-	"gpt-4.1-mini",
-	"gpt-4.1-mini-2025-04-14",
-	"gpt-4.1-nano",
-	"gpt-4.1-nano-2025-04-14",
-	"gpt-4o",
-	"gpt-4o-2024-05-13",
-	"gpt-4o-2024-08-06",
-	"gpt-4o-2024-11-20",
-	"gpt-4o-mini",
-	"gpt-4o-mini-2024-07-18",
-	"gpt-4-turbo",
-	"gpt-4-turbo-2024-04-09",
-	"gpt-4-turbo-preview",
-	"gpt-4-0125-preview",
-	"gpt-4-1106-preview",
-	"gpt-4",
-	"gpt-4-0613",
-	"gpt-4.5-preview",
-	"gpt-4.5-preview-2025-02-27",
-	"gpt-3.5-turbo-0125",
-	"gpt-3.5-turbo",
-	"gpt-3.5-turbo-1106",
-	"chatgpt-4o-latest",
-	"gpt-5-chat-latest",
+// computerUseModelIDs lists model IDs that support OpenAI's computer-use tool.
+var computerUseModelIDs = []string{
 	"computer-use-preview",
 	"computer-use-preview-2025-03-11",
-}, responsesReasoningModelIDs...)
+}
+
+// responsesModelIds lists all model IDs for OpenAI Responses API.
+var responsesModelIDs = append(
+	append([]string{
+		"gpt-4.1",
+		"gpt-4.1-2025-04-14",
+		"gpt-4.1-mini",
+		"gpt-4.1-mini-2025-04-14",
+		"gpt-4.1-nano",
+		"gpt-4.1-nano-2025-04-14",
+		"gpt-4o",
+		"gpt-4o-2024-05-13",
+		"gpt-4o-2024-08-06",
+		"gpt-4o-2024-11-20",
+		"gpt-4o-mini",
+		"gpt-4o-mini-2024-07-18",
+		"gpt-4-turbo",
+		"gpt-4-turbo-2024-04-09",
+		"gpt-4-turbo-preview",
+		"gpt-4-0125-preview",
+		"gpt-4-1106-preview",
+		"gpt-4",
+		"gpt-4-0613",
+		"gpt-4.5-preview",
+		"gpt-4.5-preview-2025-02-27",
+		"gpt-3.5-turbo-0125",
+		"gpt-3.5-turbo",
+		"gpt-3.5-turbo-1106",
+		"chatgpt-4o-latest",
+		"gpt-5-chat-latest",
+	}, computerUseModelIDs...),
+	responsesReasoningModelIDs...,
+)
 
 // NewResponsesProviderOptions creates new provider options for OpenAI Responses API.
 func NewResponsesProviderOptions(opts *ResponsesProviderOptions) fantasy.ProviderOptions {
@@ -276,6 +283,12 @@ func ParseResponsesOptions(data map[string]any) (*ResponsesProviderOptions, erro
 		return nil, err
 	}
 	return &options, nil
+}
+
+// isOpenAIComputerUseModel checks if a model ID is an OpenAI computer-use
+// Responses API model.
+func isOpenAIComputerUseModel(modelID string) bool {
+	return slices.Contains(computerUseModelIDs, modelID)
 }
 
 // IsResponsesModel checks if a model ID is a Responses API model for OpenAI.

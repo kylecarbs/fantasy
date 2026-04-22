@@ -22,6 +22,39 @@ func TestIsResponsesModel_ComputerUse(t *testing.T) {
 	require.False(t, IsResponsesModel("not-a-responses-model"))
 }
 
+func TestGetResponsesModelConfig_ComputerUseAllowlist(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name           string
+		modelID        string
+		wantReasoning  bool
+		wantSystemMode string
+	}{
+		{
+			name:           "official computer use model",
+			modelID:        string(responses.ResponsesModelComputerUsePreview),
+			wantReasoning:  true,
+			wantSystemMode: "developer",
+		},
+		{
+			name:           "unknown computer use style model",
+			modelID:        "acme-computer-use-preview",
+			wantReasoning:  false,
+			wantSystemMode: "system",
+		},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			config := getResponsesModelConfig(tc.modelID)
+			require.Equal(t, tc.wantReasoning, config.isReasoningModel)
+			require.Equal(t, tc.wantSystemMode, config.systemMessageMode)
+		})
+	}
+}
+
 func TestPrepareParams_ComputerUseRequiresStore(t *testing.T) {
 	t.Parallel()
 
