@@ -141,7 +141,8 @@ func TestResponsesToPrompt_ComputerUseWithStore(t *testing.T) {
 		},
 	}
 
-	input, warnings := toResponsesPrompt(prompt, "system", true)
+	input, warnings, err := toResponsesPrompt(prompt, "system", true)
+	require.NoError(t, err)
 	require.Empty(t, warnings)
 	require.Len(t, input, 3)
 	require.NotNil(t, input[1].OfItemReference)
@@ -158,6 +159,93 @@ func TestResponsesToPrompt_ComputerUseWithStore(t *testing.T) {
 	require.Equal(t, "account_access", computerOutput.AcknowledgedSafetyChecks[0].Code.Value)
 	require.True(t, computerOutput.AcknowledgedSafetyChecks[0].Message.Valid())
 	require.Equal(t, "Confirm access.", computerOutput.AcknowledgedSafetyChecks[0].Message.Value)
+}
+
+func TestResponsesPrompt_ComputerUseMissingMetadata(t *testing.T) {
+	t.Parallel()
+
+	t.Run("media output without metadata errors", func(t *testing.T) {
+		t.Parallel()
+
+		prompt := fantasy.Prompt{
+			testTextMessage(fantasy.MessageRoleUser, "take a screenshot"),
+			{
+				Role: fantasy.MessageRoleAssistant,
+				Content: []fantasy.MessagePart{
+					fantasy.ToolCallPart{
+						ToolCallID: "comp_item_02",
+						ToolName:   computerUseAPIName,
+						Input:      `{"type":"screenshot"}`,
+					},
+				},
+			},
+			{
+				Role: fantasy.MessageRoleTool,
+				Content: []fantasy.MessagePart{
+					NewComputerUseScreenshotResultWithMediaType("comp_item_02", "ZmFrZQ==", "image/png"),
+				},
+			},
+		}
+
+		_, _, err := toResponsesPrompt(prompt, "system", true)
+		require.EqualError(t, err, "malformed prompt: openai computer tool result for tool_call_id \"comp_item_02\" is missing matching call metadata")
+	})
+
+	for _, tc := range []struct {
+		name     string
+		output   fantasy.ToolResultOutputContent
+		wantText string
+	}{
+		{
+			name: "text output without metadata stays generic",
+			output: fantasy.ToolResultOutputContentText{
+				Text: "done",
+			},
+			wantText: "done",
+		},
+		{
+			name: "error output without metadata stays generic",
+			output: fantasy.ToolResultOutputContentError{
+				Error: context.DeadlineExceeded,
+			},
+			wantText: context.DeadlineExceeded.Error(),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			prompt := fantasy.Prompt{
+				testTextMessage(fantasy.MessageRoleUser, "run the tool"),
+				{
+					Role: fantasy.MessageRoleAssistant,
+					Content: []fantasy.MessagePart{
+						fantasy.ToolCallPart{
+							ToolCallID: "call_123",
+							ToolName:   "echo",
+							Input:      `{"text":"hello"}`,
+						},
+					},
+				},
+				{
+					Role: fantasy.MessageRoleTool,
+					Content: []fantasy.MessagePart{
+						fantasy.ToolResultPart{
+							ToolCallID: "call_123",
+							Output:     tc.output,
+						},
+					},
+				},
+			}
+
+			input, warnings, err := toResponsesPrompt(prompt, "system", false)
+			require.NoError(t, err)
+			require.Empty(t, warnings)
+			require.Len(t, input, 3)
+			require.NotNil(t, input[2].OfFunctionCallOutput)
+			require.True(t, input[2].OfFunctionCallOutput.Output.OfString.Valid())
+			require.Equal(t, tc.wantText, input[2].OfFunctionCallOutput.Output.OfString.Value)
+		})
+	}
 }
 
 func TestOpenAIComputerUseCallMetadata_JSON(t *testing.T) {

@@ -179,7 +179,10 @@ func (o responsesLanguageModel) prepareParams(call fantasy.Call) (*responses.Res
 		params.PreviousResponseID = param.NewOpt(*openaiOptions.PreviousResponseID)
 	}
 
-	input, inputWarnings := toResponsesPrompt(call.Prompt, modelConfig.systemMessageMode, storeEnabled)
+	input, inputWarnings, err := toResponsesPrompt(call.Prompt, modelConfig.systemMessageMode, storeEnabled)
+	if err != nil {
+		return nil, warnings, err
+	}
 	warnings = append(warnings, inputWarnings...)
 
 	var include []IncludeType
@@ -394,7 +397,7 @@ func responsesUsage(resp responses.Response) fantasy.Usage {
 	return usage
 }
 
-func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bool) (responses.ResponseInputParam, []fantasy.CallWarning) {
+func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bool) (responses.ResponseInputParam, []fantasy.CallWarning, error) {
 	var input responses.ResponseInputParam
 	var warnings []fantasy.CallWarning
 	computerToolCalls := make(map[string]*OpenAIComputerUseCallMetadata)
@@ -623,17 +626,20 @@ func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bo
 					continue
 				}
 
-				if metadata := computerToolCalls[toolResultPart.ToolCallID]; metadata != nil {
+				metadata := computerToolCalls[toolResultPart.ToolCallID]
+				if metadata == nil {
+					metadata = getComputerUseCallMetadata(toolResultPart.ProviderOptions)
+				}
+				if metadata != nil {
 					computerOutput, err := computerUseToolResultInput(toolResultPart, metadata)
 					if err != nil {
-						warnings = append(warnings, fantasy.CallWarning{
-							Type:    fantasy.CallWarningTypeOther,
-							Message: err.Error(),
-						})
-						continue
+						return nil, warnings, fmt.Errorf("malformed prompt: failed to build openai computer tool result for tool_call_id %q: %w", toolResultPart.ToolCallID, err)
 					}
 					input = append(input, computerOutput)
 					continue
+				}
+				if _, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentMedia](toolResultPart.Output); ok {
+					return nil, warnings, fmt.Errorf("malformed prompt: openai computer tool result for tool_call_id %q is missing matching call metadata", toolResultPart.ToolCallID)
 				}
 
 				var outputStr string
@@ -666,7 +672,7 @@ func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bo
 		}
 	}
 
-	return input, warnings
+	return input, warnings, nil
 }
 
 func hasVisibleResponsesUserContent(content responses.ResponseInputMessageContentListParam) bool {
