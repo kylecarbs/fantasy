@@ -308,7 +308,7 @@ func TestResponsesToPrompt_ComputerUseWithStore(t *testing.T) {
 	require.Equal(t, "Confirm access.", computerOutput.AcknowledgedSafetyChecks[0].Message.Value)
 }
 
-func TestResponsesPrompt_ComputerUseMissingMetadata(t *testing.T) {
+func TestResponsesToPrompt_ComputerUseMissingMetadata(t *testing.T) {
 	t.Parallel()
 
 	t.Run("media output without metadata errors", func(t *testing.T) {
