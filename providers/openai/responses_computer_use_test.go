@@ -109,26 +109,59 @@ func TestPrepareParams_ComputerUseRequiresStore(t *testing.T) {
 		require.NotNil(t, params.Tools[0].OfComputerUsePreview)
 	})
 
-	t.Run("invalid display height", func(t *testing.T) {
-		t.Parallel()
+	for _, tc := range []struct {
+		name          string
+		displayWidth  int64
+		displayHeight int64
+		wantErr       string
+	}{
+		{
+			name:          "zero display height",
+			displayWidth:  1024,
+			displayHeight: 0,
+			wantErr:       "computer use tool has invalid display_height_px",
+		},
+		{
+			name:          "zero display width",
+			displayWidth:  0,
+			displayHeight: 768,
+			wantErr:       "computer use tool has invalid display_width_px",
+		},
+		{
+			name:          "negative display width",
+			displayWidth:  -100,
+			displayHeight: 768,
+			wantErr:       "computer use tool has invalid display_width_px",
+		},
+		{
+			name:          "negative display height",
+			displayWidth:  1024,
+			displayHeight: -100,
+			wantErr:       "computer use tool has invalid display_height_px",
+		},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-		invalidTool := NewComputerUseTool(ComputerUseToolOptions{
-			DisplayWidthPx:  1024,
-			DisplayHeightPx: 0,
-			Environment:     responses.ComputerUsePreviewToolEnvironmentBrowser,
-		}, func(context.Context, fantasy.ToolCall) (fantasy.ToolResponse, error) {
-			return fantasy.ToolResponse{}, nil
-		})
+			invalidTool := NewComputerUseTool(ComputerUseToolOptions{
+				DisplayWidthPx:  tc.displayWidth,
+				DisplayHeightPx: tc.displayHeight,
+				Environment:     responses.ComputerUsePreviewToolEnvironmentBrowser,
+			}, func(context.Context, fantasy.ToolCall) (fantasy.ToolResponse, error) {
+				return fantasy.ToolResponse{}, nil
+			})
 
-		_, _, err := lm.prepareParams(fantasy.Call{
-			Prompt: prompt,
-			Tools:  []fantasy.Tool{invalidTool},
-			ProviderOptions: fantasy.ProviderOptions{
-				Name: &ResponsesProviderOptions{Store: fantasy.Opt(true)},
-			},
+			_, _, err := lm.prepareParams(fantasy.Call{
+				Prompt: prompt,
+				Tools:  []fantasy.Tool{invalidTool},
+				ProviderOptions: fantasy.ProviderOptions{
+					Name: &ResponsesProviderOptions{Store: fantasy.Opt(true)},
+				},
+			})
+			require.EqualError(t, err, tc.wantErr)
 		})
-		require.EqualError(t, err, "computer use tool has invalid display_height_px")
-	})
+	}
 }
 
 func TestToResponsesTools_ComputerUsePreview(t *testing.T) {
@@ -164,22 +197,59 @@ func TestToResponsesTools_ComputerUsePreview(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, `{"display_height":900,"display_width":1440,"environment":"ubuntu","type":"computer_use_preview"}`, string(toolJSON))
 
-	invalidTool := NewComputerUseTool(ComputerUseToolOptions{
-		DisplayWidthPx:  1440,
-		DisplayHeightPx: 0,
-		Environment:     responses.ComputerUsePreviewToolEnvironmentUbuntu,
-	}, func(context.Context, fantasy.ToolCall) (fantasy.ToolResponse, error) {
-		return fantasy.ToolResponse{}, nil
-	})
+	for _, tc := range []struct {
+		name          string
+		displayWidth  int64
+		displayHeight int64
+		wantErr       string
+	}{
+		{
+			name:          "zero display height",
+			displayWidth:  1440,
+			displayHeight: 0,
+			wantErr:       "computer use tool has invalid display_height_px",
+		},
+		{
+			name:          "zero display width",
+			displayWidth:  0,
+			displayHeight: 900,
+			wantErr:       "computer use tool has invalid display_width_px",
+		},
+		{
+			name:          "negative display width",
+			displayWidth:  -100,
+			displayHeight: 900,
+			wantErr:       "computer use tool has invalid display_width_px",
+		},
+		{
+			name:          "negative display height",
+			displayWidth:  1440,
+			displayHeight: -100,
+			wantErr:       "computer use tool has invalid display_height_px",
+		},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	invalidDefinition := invalidTool.Definition()
-	argsJSON, err = json.Marshal(invalidDefinition.Args)
-	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal(argsJSON, &invalidDefinition.Args))
+			invalidTool := NewComputerUseTool(ComputerUseToolOptions{
+				DisplayWidthPx:  tc.displayWidth,
+				DisplayHeightPx: tc.displayHeight,
+				Environment:     responses.ComputerUsePreviewToolEnvironmentUbuntu,
+			}, func(context.Context, fantasy.ToolCall) (fantasy.ToolResponse, error) {
+				return fantasy.ToolResponse{}, nil
+			})
 
-	_, _, warnings, err = toResponsesTools([]fantasy.Tool{invalidDefinition}, nil, nil)
-	require.EqualError(t, err, "computer use tool has invalid display_height_px")
-	require.Empty(t, warnings)
+			invalidDefinition := invalidTool.Definition()
+			invalidArgsJSON, err := json.Marshal(invalidDefinition.Args)
+			require.NoError(t, err)
+			require.NoError(t, json.Unmarshal(invalidArgsJSON, &invalidDefinition.Args))
+
+			_, _, warnings, err := toResponsesTools([]fantasy.Tool{invalidDefinition}, nil, nil)
+			require.EqualError(t, err, tc.wantErr)
+			require.Empty(t, warnings)
+		})
+	}
 }
 
 func TestResponsesToPrompt_ComputerUseWithStore(t *testing.T) {
