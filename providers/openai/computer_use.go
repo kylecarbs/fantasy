@@ -24,7 +24,6 @@ const (
 type ComputerUseToolOptions struct {
 	DisplayWidthPx  int64
 	DisplayHeightPx int64
-	DisplayNumber   *int64
 	Environment     responses.ComputerUsePreviewToolEnvironment
 }
 
@@ -37,9 +36,6 @@ func NewComputerUseTool(
 		"display_width_px":  opts.DisplayWidthPx,
 		"display_height_px": opts.DisplayHeightPx,
 		"environment":       opts.Environment,
-	}
-	if opts.DisplayNumber != nil {
-		args["display_number"] = *opts.DisplayNumber
 	}
 	return fantasy.NewExecutableProviderTool(fantasy.ProviderDefinedTool{
 		ID:   computerUseToolID,

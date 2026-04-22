@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"reflect"
 	"testing"
 
 	"charm.land/fantasy"
@@ -14,11 +15,9 @@ import (
 func TestNewComputerUseTool(t *testing.T) {
 	t.Parallel()
 
-	displayNumber := int64(2)
 	tool := NewComputerUseTool(ComputerUseToolOptions{
 		DisplayWidthPx:  1920,
 		DisplayHeightPx: 1080,
-		DisplayNumber:   &displayNumber,
 		Environment:     responses.ComputerUsePreviewToolEnvironmentUbuntu,
 	}, func(context.Context, fantasy.ToolCall) (fantasy.ToolResponse, error) {
 		return fantasy.ToolResponse{}, nil
@@ -27,10 +26,19 @@ func TestNewComputerUseTool(t *testing.T) {
 	definition := tool.Definition()
 	require.Equal(t, computerUseToolID, definition.ID)
 	require.Equal(t, computerUseAPIName, definition.Name)
+	require.Len(t, definition.Args, 3)
 	require.Equal(t, int64(1920), definition.Args["display_width_px"])
 	require.Equal(t, int64(1080), definition.Args["display_height_px"])
 	require.Equal(t, responses.ComputerUsePreviewToolEnvironmentUbuntu, definition.Args["environment"])
-	require.Equal(t, int64(2), definition.Args["display_number"])
+	_, hasDisplayNumber := definition.Args["display_number"]
+	require.False(t, hasDisplayNumber)
+}
+
+func TestComputerUseToolOptions_DoesNotExposeDisplayNumber(t *testing.T) {
+	t.Parallel()
+
+	_, exists := reflect.TypeOf(ComputerUseToolOptions{}).FieldByName("DisplayNumber")
+	require.False(t, exists)
 }
 
 func TestParseComputerUseInput(t *testing.T) {

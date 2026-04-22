@@ -101,11 +101,9 @@ func TestPrepareParams_ComputerUseRequiresStore(t *testing.T) {
 func TestToResponsesTools_ComputerUsePreview(t *testing.T) {
 	t.Parallel()
 
-	displayNumber := int64(3)
 	tool := NewComputerUseTool(ComputerUseToolOptions{
 		DisplayWidthPx:  1440,
 		DisplayHeightPx: 900,
-		DisplayNumber:   &displayNumber,
 		Environment:     responses.ComputerUsePreviewToolEnvironmentUbuntu,
 	}, func(context.Context, fantasy.ToolCall) (fantasy.ToolResponse, error) {
 		return fantasy.ToolResponse{}, nil
@@ -115,6 +113,9 @@ func TestToResponsesTools_ComputerUsePreview(t *testing.T) {
 	argsJSON, err := json.Marshal(definition.Args)
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(argsJSON, &definition.Args))
+	require.Len(t, definition.Args, 3)
+	_, hasDisplayNumber := definition.Args["display_number"]
+	require.False(t, hasDisplayNumber)
 
 	tools, toolChoice, warnings, err := toResponsesTools([]fantasy.Tool{definition}, nil, nil)
 	require.NoError(t, err)
@@ -125,6 +126,10 @@ func TestToResponsesTools_ComputerUsePreview(t *testing.T) {
 	require.Equal(t, int64(900), tools[0].OfComputerUsePreview.DisplayHeight)
 	require.Equal(t, int64(1440), tools[0].OfComputerUsePreview.DisplayWidth)
 	require.Equal(t, responses.ComputerUsePreviewToolEnvironmentUbuntu, tools[0].OfComputerUsePreview.Environment)
+
+	toolJSON, err := json.Marshal(tools[0])
+	require.NoError(t, err)
+	require.JSONEq(t, `{"display_height":900,"display_width":1440,"environment":"ubuntu","type":"computer_use_preview"}`, string(toolJSON))
 
 	invalidTool := NewComputerUseTool(ComputerUseToolOptions{
 		DisplayWidthPx:  1440,
