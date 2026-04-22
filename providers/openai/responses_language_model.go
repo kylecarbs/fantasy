@@ -345,7 +345,10 @@ func (o responsesLanguageModel) prepareParams(call fantasy.Call) (*responses.Res
 		}
 	}
 
-	tools, toolChoice, toolWarnings := toResponsesTools(call.Tools, call.ToolChoice, openaiOptions)
+	tools, toolChoice, toolWarnings, err := toResponsesTools(call.Tools, call.ToolChoice, openaiOptions)
+	if err != nil {
+		return nil, warnings, err
+	}
 	warnings = append(warnings, toolWarnings...)
 
 	if len(tools) > 0 {
@@ -689,12 +692,12 @@ func hasVisibleResponsesAssistantContent(items []responses.ResponseInputItemUnio
 	return false
 }
 
-func toResponsesTools(tools []fantasy.Tool, toolChoice *fantasy.ToolChoice, options *ResponsesProviderOptions) ([]responses.ToolUnionParam, responses.ResponseNewParamsToolChoiceUnion, []fantasy.CallWarning) {
+func toResponsesTools(tools []fantasy.Tool, toolChoice *fantasy.ToolChoice, options *ResponsesProviderOptions) ([]responses.ToolUnionParam, responses.ResponseNewParamsToolChoiceUnion, []fantasy.CallWarning, error) {
 	warnings := make([]fantasy.CallWarning, 0)
 	var openaiTools []responses.ToolUnionParam
 
 	if len(tools) == 0 {
-		return nil, responses.ResponseNewParamsToolChoiceUnion{}, nil
+		return nil, responses.ResponseNewParamsToolChoiceUnion{}, nil, nil
 	}
 
 	strictJSONSchema := false
@@ -731,12 +734,7 @@ func toResponsesTools(tools []fantasy.Tool, toolChoice *fantasy.ToolChoice, opti
 			case computerUseToolID:
 				computerTool, err := toComputerUseToolParam(pt)
 				if err != nil {
-					warnings = append(warnings, fantasy.CallWarning{
-						Type:    fantasy.CallWarningTypeUnsupportedTool,
-						Tool:    tool,
-						Message: err.Error(),
-					})
-					continue
+					return nil, responses.ResponseNewParamsToolChoiceUnion{}, warnings, err
 				}
 				openaiTools = append(openaiTools, computerTool)
 				continue
@@ -751,7 +749,7 @@ func toResponsesTools(tools []fantasy.Tool, toolChoice *fantasy.ToolChoice, opti
 	}
 
 	if toolChoice == nil {
-		return openaiTools, responses.ResponseNewParamsToolChoiceUnion{}, warnings
+		return openaiTools, responses.ResponseNewParamsToolChoiceUnion{}, warnings, nil
 	}
 
 	var openaiToolChoice responses.ResponseNewParamsToolChoiceUnion
@@ -778,7 +776,7 @@ func toResponsesTools(tools []fantasy.Tool, toolChoice *fantasy.ToolChoice, opti
 		}
 	}
 
-	return openaiTools, openaiToolChoice, warnings
+	return openaiTools, openaiToolChoice, warnings, nil
 }
 
 func (o responsesLanguageModel) Generate(ctx context.Context, call fantasy.Call) (*fantasy.Response, error) {

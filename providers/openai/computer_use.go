@@ -408,11 +408,11 @@ func anyToComputerUseEnvironment(v any) (responses.ComputerUsePreviewToolEnviron
 
 func toComputerUseToolParam(pt fantasy.ProviderDefinedTool) (responses.ToolUnionParam, error) {
 	displayHeight, ok := anyToInt64(pt.Args["display_height_px"])
-	if !ok {
+	if !ok || displayHeight <= 0 {
 		return responses.ToolUnionParam{}, fmt.Errorf("computer use tool has invalid display_height_px")
 	}
 	displayWidth, ok := anyToInt64(pt.Args["display_width_px"])
-	if !ok {
+	if !ok || displayWidth <= 0 {
 		return responses.ToolUnionParam{}, fmt.Errorf("computer use tool has invalid display_width_px")
 	}
 	environment, ok := anyToComputerUseEnvironment(pt.Args["environment"])

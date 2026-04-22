@@ -75,6 +75,27 @@ func TestPrepareParams_ComputerUseRequiresStore(t *testing.T) {
 		require.Len(t, params.Tools, 1)
 		require.NotNil(t, params.Tools[0].OfComputerUsePreview)
 	})
+
+	t.Run("invalid display height", func(t *testing.T) {
+		t.Parallel()
+
+		invalidTool := NewComputerUseTool(ComputerUseToolOptions{
+			DisplayWidthPx:  1024,
+			DisplayHeightPx: 0,
+			Environment:     responses.ComputerUsePreviewToolEnvironmentBrowser,
+		}, func(context.Context, fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		})
+
+		_, _, err := lm.prepareParams(fantasy.Call{
+			Prompt: prompt,
+			Tools:  []fantasy.Tool{invalidTool},
+			ProviderOptions: fantasy.ProviderOptions{
+				Name: &ResponsesProviderOptions{Store: fantasy.Opt(true)},
+			},
+		})
+		require.EqualError(t, err, "computer use tool has invalid display_height_px")
+	})
 }
 
 func TestToResponsesTools_ComputerUsePreview(t *testing.T) {
@@ -95,7 +116,8 @@ func TestToResponsesTools_ComputerUsePreview(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(argsJSON, &definition.Args))
 
-	tools, toolChoice, warnings := toResponsesTools([]fantasy.Tool{definition}, nil, nil)
+	tools, toolChoice, warnings, err := toResponsesTools([]fantasy.Tool{definition}, nil, nil)
+	require.NoError(t, err)
 	require.Empty(t, warnings)
 	require.Empty(t, toolChoice)
 	require.Len(t, tools, 1)
@@ -103,6 +125,23 @@ func TestToResponsesTools_ComputerUsePreview(t *testing.T) {
 	require.Equal(t, int64(900), tools[0].OfComputerUsePreview.DisplayHeight)
 	require.Equal(t, int64(1440), tools[0].OfComputerUsePreview.DisplayWidth)
 	require.Equal(t, responses.ComputerUsePreviewToolEnvironmentUbuntu, tools[0].OfComputerUsePreview.Environment)
+
+	invalidTool := NewComputerUseTool(ComputerUseToolOptions{
+		DisplayWidthPx:  1440,
+		DisplayHeightPx: 0,
+		Environment:     responses.ComputerUsePreviewToolEnvironmentUbuntu,
+	}, func(context.Context, fantasy.ToolCall) (fantasy.ToolResponse, error) {
+		return fantasy.ToolResponse{}, nil
+	})
+
+	invalidDefinition := invalidTool.Definition()
+	argsJSON, err = json.Marshal(invalidDefinition.Args)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(argsJSON, &invalidDefinition.Args))
+
+	_, _, warnings, err = toResponsesTools([]fantasy.Tool{invalidDefinition}, nil, nil)
+	require.EqualError(t, err, "computer use tool has invalid display_height_px")
+	require.Empty(t, warnings)
 }
 
 func TestResponsesToPrompt_ComputerUseWithStore(t *testing.T) {
