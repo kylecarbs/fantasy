@@ -90,7 +90,7 @@ func getResponsesModelConfig(modelID string) responsesModelConfig {
 		strings.HasPrefix(modelID, "o4") || strings.Contains(modelID, "-o4") ||
 		strings.HasPrefix(modelID, "oss") || strings.Contains(modelID, "-oss") ||
 		strings.Contains(modelID, "gpt-5") || strings.Contains(modelID, "codex-") ||
-		strings.Contains(modelID, "computer-use") {
+		isOpenAIComputerUseModel(modelID) {
 		if strings.Contains(modelID, "o1-mini") || strings.Contains(modelID, "o1-preview") {
 			return responsesModelConfig{
 				isReasoningModel:           true,
@@ -158,6 +158,11 @@ func (o responsesLanguageModel) prepareParams(call fantasy.Call) (*responses.Res
 		}
 	}
 
+	storeEnabled := openaiOptions != nil && openaiOptions.Store != nil && *openaiOptions.Store
+	if hasComputerUseTool(call.Tools) && !storeEnabled {
+		return nil, warnings, errors.New(computerUseStoreError)
+	}
+
 	if openaiOptions != nil && openaiOptions.Store != nil {
 		params.Store = param.NewOpt(*openaiOptions.Store)
 	} else {
@@ -168,14 +173,16 @@ func (o responsesLanguageModel) prepareParams(call fantasy.Call) (*responses.Res
 		if err := validatePreviousResponseIDPrompt(call.Prompt); err != nil {
 			return nil, warnings, err
 		}
-		if openaiOptions.Store == nil || !*openaiOptions.Store {
+		if !storeEnabled {
 			return nil, warnings, errors.New(previousResponseIDStoreError)
 		}
 		params.PreviousResponseID = param.NewOpt(*openaiOptions.PreviousResponseID)
 	}
 
-	storeEnabled := openaiOptions != nil && openaiOptions.Store != nil && *openaiOptions.Store
-	input, inputWarnings := toResponsesPrompt(call.Prompt, modelConfig.systemMessageMode, storeEnabled)
+	input, inputWarnings, err := toResponsesPrompt(call.Prompt, modelConfig.systemMessageMode, storeEnabled)
+	if err != nil {
+		return nil, warnings, err
+	}
 	warnings = append(warnings, inputWarnings...)
 
 	var include []IncludeType
@@ -338,7 +345,10 @@ func (o responsesLanguageModel) prepareParams(call fantasy.Call) (*responses.Res
 		}
 	}
 
-	tools, toolChoice, toolWarnings := toResponsesTools(call.Tools, call.ToolChoice, openaiOptions)
+	tools, toolChoice, toolWarnings, err := toResponsesTools(call.Tools, call.ToolChoice, openaiOptions)
+	if err != nil {
+		return nil, warnings, err
+	}
 	warnings = append(warnings, toolWarnings...)
 
 	if len(tools) > 0 {
@@ -390,9 +400,10 @@ func responsesUsage(resp responses.Response) fantasy.Usage {
 	return usage
 }
 
-func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bool) (responses.ResponseInputParam, []fantasy.CallWarning) {
+func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bool) (responses.ResponseInputParam, []fantasy.CallWarning, error) {
 	var input responses.ResponseInputParam
 	var warnings []fantasy.CallWarning
+	computerToolCalls := make(map[string]*OpenAIComputerUseCallMetadata)
 
 	for _, msg := range prompt {
 		switch msg.Role {
@@ -536,6 +547,14 @@ func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bo
 						continue
 					}
 
+					if metadata := getComputerUseCallMetadata(toolCallPart.ProviderOptions); metadata != nil {
+						computerToolCalls[toolCallPart.ToolCallID] = metadata
+						if store {
+							input = append(input, responses.ResponseInputItemParamOfItemReference(toolCallPart.ToolCallID))
+						}
+						continue
+					}
+
 					if toolCallPart.ProviderExecuted {
 						if store {
 							// Round-trip provider-executed tools via
@@ -610,6 +629,22 @@ func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bo
 					continue
 				}
 
+				metadata := computerToolCalls[toolResultPart.ToolCallID]
+				if metadata == nil {
+					metadata = getComputerUseCallMetadata(toolResultPart.ProviderOptions)
+				}
+				if metadata != nil {
+					computerOutput, err := computerUseToolResultInput(toolResultPart, metadata)
+					if err != nil {
+						return nil, warnings, fmt.Errorf("malformed prompt: failed to build openai computer tool result for tool_call_id %q: %w", toolResultPart.ToolCallID, err)
+					}
+					input = append(input, computerOutput)
+					continue
+				}
+				if _, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentMedia](toolResultPart.Output); ok {
+					return nil, warnings, fmt.Errorf("malformed prompt: openai computer tool result for tool_call_id %q is missing matching call metadata", toolResultPart.ToolCallID)
+				}
+
 				var outputStr string
 
 				switch toolResultPart.Output.GetType() {
@@ -640,7 +675,7 @@ func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bo
 		}
 	}
 
-	return input, warnings
+	return input, warnings, nil
 }
 
 func hasVisibleResponsesUserContent(content responses.ResponseInputMessageContentListParam) bool {
@@ -657,12 +692,12 @@ func hasVisibleResponsesAssistantContent(items []responses.ResponseInputItemUnio
 	return false
 }
 
-func toResponsesTools(tools []fantasy.Tool, toolChoice *fantasy.ToolChoice, options *ResponsesProviderOptions) ([]responses.ToolUnionParam, responses.ResponseNewParamsToolChoiceUnion, []fantasy.CallWarning) {
+func toResponsesTools(tools []fantasy.Tool, toolChoice *fantasy.ToolChoice, options *ResponsesProviderOptions) ([]responses.ToolUnionParam, responses.ResponseNewParamsToolChoiceUnion, []fantasy.CallWarning, error) {
 	warnings := make([]fantasy.CallWarning, 0)
 	var openaiTools []responses.ToolUnionParam
 
 	if len(tools) == 0 {
-		return nil, responses.ResponseNewParamsToolChoiceUnion{}, nil
+		return nil, responses.ResponseNewParamsToolChoiceUnion{}, nil, nil
 	}
 
 	strictJSONSchema := false
@@ -688,13 +723,20 @@ func toResponsesTools(tools []fantasy.Tool, toolChoice *fantasy.ToolChoice, opti
 			continue
 		}
 		if tool.GetType() == fantasy.ToolTypeProviderDefined {
-			pt, ok := tool.(fantasy.ProviderDefinedTool)
+			pt, ok := asProviderDefinedTool(tool)
 			if !ok {
 				continue
 			}
 			switch pt.ID {
 			case "web_search":
 				openaiTools = append(openaiTools, toWebSearchToolParam(pt))
+				continue
+			case computerUseToolID:
+				computerTool, err := toComputerUseToolParam(pt)
+				if err != nil {
+					return nil, responses.ResponseNewParamsToolChoiceUnion{}, warnings, err
+				}
+				openaiTools = append(openaiTools, computerTool)
 				continue
 			}
 		}
@@ -707,7 +749,7 @@ func toResponsesTools(tools []fantasy.Tool, toolChoice *fantasy.ToolChoice, opti
 	}
 
 	if toolChoice == nil {
-		return openaiTools, responses.ResponseNewParamsToolChoiceUnion{}, warnings
+		return openaiTools, responses.ResponseNewParamsToolChoiceUnion{}, warnings, nil
 	}
 
 	var openaiToolChoice responses.ResponseNewParamsToolChoiceUnion
@@ -734,7 +776,7 @@ func toResponsesTools(tools []fantasy.Tool, toolChoice *fantasy.ToolChoice, opti
 		}
 	}
 
-	return openaiTools, openaiToolChoice, warnings
+	return openaiTools, openaiToolChoice, warnings, nil
 }
 
 func (o responsesLanguageModel) Generate(ctx context.Context, call fantasy.Call) (*fantasy.Response, error) {
@@ -805,6 +847,14 @@ func (o responsesLanguageModel) Generate(ctx context.Context, call fantasy.Call)
 				ToolName:         outputItem.Name,
 				Input:            outputItem.Arguments.OfString,
 			})
+
+		case "computer_call":
+			hasFunctionCall = true
+			computerCall, err := computerUseToolCallContent(outputItem.AsComputerCall())
+			if err != nil {
+				return nil, fmt.Errorf("failed to build computer tool call content: %w", err)
+			}
+			content = append(content, computerCall)
 
 		case "web_search_call":
 			// Provider-executed web search tool call. Emit both
@@ -942,6 +992,15 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 						return
 					}
 
+				case "computer_call":
+					if !yield(fantasy.StreamPart{
+						Type:         fantasy.StreamPartTypeToolInputStart,
+						ID:           added.Item.ID,
+						ToolCallName: computerUseAPIName,
+					}) {
+						return
+					}
+
 				case "web_search_call":
 					// Provider-executed web search; emit start.
 					if !yield(fantasy.StreamPart{
@@ -1007,6 +1066,35 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 						}) {
 							return
 						}
+					}
+
+				case "computer_call":
+					hasFunctionCall = true
+					computerCall, err := computerUseToolCallContent(done.Item.AsComputerCall())
+					if err != nil {
+						if !yield(fantasy.StreamPart{
+							Type:  fantasy.StreamPartTypeError,
+							Error: fmt.Errorf("failed to build computer tool call content: %w", err),
+						}) {
+							return
+						}
+						return
+					}
+					if !yield(fantasy.StreamPart{
+						Type: fantasy.StreamPartTypeToolInputEnd,
+						ID:   computerCall.ToolCallID,
+					}) {
+						return
+					}
+					if !yield(fantasy.StreamPart{
+						Type:             fantasy.StreamPartTypeToolCall,
+						ID:               computerCall.ToolCallID,
+						ToolCallName:     computerCall.ToolName,
+						ToolCallInput:    computerCall.Input,
+						ProviderExecuted: computerCall.ProviderExecuted,
+						ProviderMetadata: computerCall.ProviderMetadata,
+					}) {
+						return
 					}
 
 				case "web_search_call":

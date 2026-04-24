@@ -3183,7 +3183,9 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+
+		require.NoError(t, err)
 
 		require.Len(t, input, 1, "should only have user message")
 		require.Len(t, warnings, 1)
@@ -3209,7 +3211,9 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+
+		require.NoError(t, err)
 
 		require.Len(t, input, 2, "should have both user and assistant messages")
 		require.Empty(t, warnings)
@@ -3237,7 +3241,9 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+
+		require.NoError(t, err)
 
 		require.Len(t, input, 2, "should have both user and assistant messages")
 		require.Empty(t, warnings)
@@ -3258,7 +3264,9 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+
+		require.NoError(t, err)
 
 		require.Empty(t, input)
 		require.Len(t, warnings, 2) // One for unsupported type, one for empty message
@@ -3280,7 +3288,9 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+
+		require.NoError(t, err)
 
 		require.Len(t, input, 1)
 		require.Empty(t, warnings)
@@ -3301,7 +3311,9 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+
+		require.NoError(t, err)
 
 		require.Len(t, input, 1)
 		require.Empty(t, warnings)
@@ -3322,7 +3334,9 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+
+		require.NoError(t, err)
 
 		require.Len(t, input, 1)
 		require.Empty(t, warnings)
@@ -3955,7 +3969,9 @@ func TestResponsesToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 	t.Run("store false skips item reference", func(t *testing.T) {
 		t.Parallel()
 
-		input, warnings := toResponsesPrompt(prompt, "system instructions", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system instructions", false)
+
+		require.NoError(t, err)
 
 		require.Empty(t, warnings)
 		require.Len(t, input, 2,
@@ -3967,7 +3983,9 @@ func TestResponsesToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 	t.Run("store true uses item reference", func(t *testing.T) {
 		t.Parallel()
 
-		input, warnings := toResponsesPrompt(prompt, "system instructions", true)
+		input, warnings, err := toResponsesPrompt(prompt, "system instructions", true)
+
+		require.NoError(t, err)
 
 		require.Empty(t, warnings)
 		require.Len(t, input, 3,
@@ -4019,7 +4037,9 @@ func TestResponsesToPrompt_ReasoningWithStore(t *testing.T) {
 	t.Run("store true skips reasoning", func(t *testing.T) {
 		t.Parallel()
 
-		input, warnings := toResponsesPrompt(prompt, "system", true)
+		input, warnings, err := toResponsesPrompt(prompt, "system", true)
+
+		require.NoError(t, err)
 		require.Empty(t, warnings)
 
 		// With store=true: user, assistant text (reasoning
@@ -4036,7 +4056,9 @@ func TestResponsesToPrompt_ReasoningWithStore(t *testing.T) {
 	t.Run("store false skips reasoning", func(t *testing.T) {
 		t.Parallel()
 
-		input, warnings := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+
+		require.NoError(t, err)
 		require.Empty(t, warnings)
 
 		// With store=false: user, assistant text, follow-up user.

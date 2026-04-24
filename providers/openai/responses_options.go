@@ -14,6 +14,7 @@ const (
 	TypeResponsesProviderOptions   = Name + ".responses.options"
 	TypeResponsesReasoningMetadata = Name + ".responses.reasoning_metadata"
 	TypeWebSearchCallMetadata      = Name + ".responses.web_search_call_metadata"
+	TypeComputerUseCallMetadata    = Name + ".responses.computer_use_call_metadata"
 )
 
 // Register OpenAI Responses API-specific types with the global registry.
@@ -41,6 +42,13 @@ func init() {
 	})
 	fantasy.RegisterProviderType(TypeWebSearchCallMetadata, func(data []byte) (fantasy.ProviderOptionsData, error) {
 		var v WebSearchCallMetadata
+		if err := json.Unmarshal(data, &v); err != nil {
+			return nil, err
+		}
+		return &v, nil
+	})
+	fantasy.RegisterProviderType(TypeComputerUseCallMetadata, func(data []byte) (fantasy.ProviderOptionsData, error) {
+		var v OpenAIComputerUseCallMetadata
 		if err := json.Unmarshal(data, &v); err != nil {
 			return nil, err
 		}
@@ -224,35 +232,44 @@ var responsesReasoningModelIDs = []string{
 	"gpt-oss-120b",
 }
 
+// computerUseModelIDs lists model IDs that support OpenAI's computer-use tool.
+var computerUseModelIDs = []string{
+	"computer-use-preview",
+	"computer-use-preview-2025-03-11",
+}
+
 // responsesModelIds lists all model IDs for OpenAI Responses API.
-var responsesModelIDs = append([]string{
-	"gpt-4.1",
-	"gpt-4.1-2025-04-14",
-	"gpt-4.1-mini",
-	"gpt-4.1-mini-2025-04-14",
-	"gpt-4.1-nano",
-	"gpt-4.1-nano-2025-04-14",
-	"gpt-4o",
-	"gpt-4o-2024-05-13",
-	"gpt-4o-2024-08-06",
-	"gpt-4o-2024-11-20",
-	"gpt-4o-mini",
-	"gpt-4o-mini-2024-07-18",
-	"gpt-4-turbo",
-	"gpt-4-turbo-2024-04-09",
-	"gpt-4-turbo-preview",
-	"gpt-4-0125-preview",
-	"gpt-4-1106-preview",
-	"gpt-4",
-	"gpt-4-0613",
-	"gpt-4.5-preview",
-	"gpt-4.5-preview-2025-02-27",
-	"gpt-3.5-turbo-0125",
-	"gpt-3.5-turbo",
-	"gpt-3.5-turbo-1106",
-	"chatgpt-4o-latest",
-	"gpt-5-chat-latest",
-}, responsesReasoningModelIDs...)
+var responsesModelIDs = append(
+	append([]string{
+		"gpt-4.1",
+		"gpt-4.1-2025-04-14",
+		"gpt-4.1-mini",
+		"gpt-4.1-mini-2025-04-14",
+		"gpt-4.1-nano",
+		"gpt-4.1-nano-2025-04-14",
+		"gpt-4o",
+		"gpt-4o-2024-05-13",
+		"gpt-4o-2024-08-06",
+		"gpt-4o-2024-11-20",
+		"gpt-4o-mini",
+		"gpt-4o-mini-2024-07-18",
+		"gpt-4-turbo",
+		"gpt-4-turbo-2024-04-09",
+		"gpt-4-turbo-preview",
+		"gpt-4-0125-preview",
+		"gpt-4-1106-preview",
+		"gpt-4",
+		"gpt-4-0613",
+		"gpt-4.5-preview",
+		"gpt-4.5-preview-2025-02-27",
+		"gpt-3.5-turbo-0125",
+		"gpt-3.5-turbo",
+		"gpt-3.5-turbo-1106",
+		"chatgpt-4o-latest",
+		"gpt-5-chat-latest",
+	}, computerUseModelIDs...),
+	responsesReasoningModelIDs...,
+)
 
 // NewResponsesProviderOptions creates new provider options for OpenAI Responses API.
 func NewResponsesProviderOptions(opts *ResponsesProviderOptions) fantasy.ProviderOptions {
@@ -268,6 +285,12 @@ func ParseResponsesOptions(data map[string]any) (*ResponsesProviderOptions, erro
 		return nil, err
 	}
 	return &options, nil
+}
+
+// isOpenAIComputerUseModel checks if a model ID is an OpenAI computer-use
+// Responses API model.
+func isOpenAIComputerUseModel(modelID string) bool {
+	return slices.Contains(computerUseModelIDs, modelID)
 }
 
 // IsResponsesModel checks if a model ID is a Responses API model for OpenAI.
@@ -386,5 +409,41 @@ func (m *WebSearchCallMetadata) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*m = WebSearchCallMetadata(p)
+	return nil
+}
+
+// OpenAIComputerUsePendingSafetyCheck stores a pending safety check from an
+// OpenAI computer tool call using local types suitable for JSON round-tripping.
+type OpenAIComputerUsePendingSafetyCheck struct {
+	ID      string `json:"id"`
+	Code    string `json:"code,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+// OpenAIComputerUseCallMetadata stores structured metadata for an OpenAI
+// computer tool call. CallID is required to submit the matching
+// computer_call_output on replay.
+type OpenAIComputerUseCallMetadata struct {
+	CallID              string                                `json:"call_id"`
+	PendingSafetyChecks []OpenAIComputerUsePendingSafetyCheck `json:"pending_safety_checks,omitempty"`
+}
+
+// Options implements the ProviderOptionsData interface.
+func (*OpenAIComputerUseCallMetadata) Options() {}
+
+// MarshalJSON implements custom JSON marshaling with type info.
+func (m OpenAIComputerUseCallMetadata) MarshalJSON() ([]byte, error) {
+	type plain OpenAIComputerUseCallMetadata
+	return fantasy.MarshalProviderType(TypeComputerUseCallMetadata, plain(m))
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling with type info.
+func (m *OpenAIComputerUseCallMetadata) UnmarshalJSON(data []byte) error {
+	type plain OpenAIComputerUseCallMetadata
+	var p plain
+	if err := fantasy.UnmarshalProviderType(data, &p); err != nil {
+		return err
+	}
+	*m = OpenAIComputerUseCallMetadata(p)
 	return nil
 }
