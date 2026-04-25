@@ -565,12 +565,44 @@ func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bo
 					// recognised Responses API input type; skip.
 					continue
 				case fantasy.ContentTypeReasoning:
-					// Reasoning items are always skipped during replay.
-					// When store is enabled, the API already has them
-					// persisted server-side. When store is disabled, the
-					// item IDs are ephemeral and referencing them causes
-					// "Item not found" errors. In both cases, replaying
-					// reasoning inline is not supported by the API.
+					if !store {
+						// When store is disabled, server-side reasoning
+						// items are ephemeral and the IDs cannot be
+						// referenced. Provider-executed tool calls in the
+						// same turn are also skipped under store=false,
+						// so there is nothing to pair with.
+						continue
+					}
+					// Store=true: replay the reasoning item via
+					// item_reference using the persisted ItemID. Without
+					// this reference the API rejects any following
+					// provider-executed item (e.g. web_search_call) with:
+					//
+					//	Item 'ws_xxx' of type 'web_search_call' was
+					//	provided without its required 'reasoning' item:
+					//	'rs_xxx'.
+					//
+					// Inline OfReasoning replay is intentionally not
+					// used: the API rejects reconstructed reasoning
+					// items because they cannot be paired with the
+					// output items that originally followed them
+					// (see fantasy upstream PR #181).
+					reasoningPart, ok := fantasy.AsContentType[fantasy.ReasoningPart](c)
+					if !ok {
+						warnings = append(warnings, fantasy.CallWarning{
+							Type:    fantasy.CallWarningTypeOther,
+							Message: "assistant reasoning part does not have the right type",
+						})
+						continue
+					}
+					meta := GetReasoningMetadata(reasoningPart.ProviderOptions)
+					if meta == nil || meta.ItemID == "" {
+						// No persisted ID to reference. Falling back to
+						// skipping is safe; the rest of the assistant
+						// message still replays.
+						continue
+					}
+					input = append(input, responses.ResponseInputItemParamOfItemReference(meta.ItemID))
 					continue
 				}
 			}
