@@ -175,8 +175,11 @@ func (o responsesLanguageModel) prepareParams(call fantasy.Call) (*responses.Res
 	}
 
 	storeEnabled := openaiOptions != nil && openaiOptions.Store != nil && *openaiOptions.Store
-	input, inputWarnings := toResponsesPrompt(call.Prompt, modelConfig.systemMessageMode, storeEnabled)
+	input, inputWarnings, err := toResponsesPrompt(call.Prompt, modelConfig.systemMessageMode, storeEnabled)
 	warnings = append(warnings, inputWarnings...)
+	if err != nil {
+		return nil, warnings, err
+	}
 
 	var include []IncludeType
 
@@ -390,7 +393,7 @@ func responsesUsage(resp responses.Response) fantasy.Usage {
 	return usage
 }
 
-func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bool) (responses.ResponseInputParam, []fantasy.CallWarning) {
+func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bool) (responses.ResponseInputParam, []fantasy.CallWarning, error) {
 	var input responses.ResponseInputParam
 	var warnings []fantasy.CallWarning
 
@@ -537,16 +540,9 @@ func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bo
 					}
 
 					if toolCallPart.ProviderExecuted {
-						if store {
-							// Round-trip provider-executed tools via
-							// item_reference, letting the API resolve
-							// the stored output item by ID.
-							input = append(input, responses.ResponseInputItemParamOfItemReference(toolCallPart.ToolCallID))
-						}
-						// When store is disabled, server-side items are
-						// ephemeral and cannot be referenced. Skip the
-						// tool call; results are already omitted for
-						// provider-executed tools.
+						// Manual replay cannot safely reference stored
+						// provider-executed items without previous_response_id.
+						// Skip them, matching provider-executed tool results.
 						continue
 					}
 
@@ -640,7 +636,56 @@ func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bo
 		}
 	}
 
-	return input, warnings
+	if err := validateResponsesFunctionCallOutputs(input); err != nil {
+		return nil, warnings, err
+	}
+
+	return input, warnings, nil
+}
+
+func validateResponsesFunctionCallOutputs(input responses.ResponseInputParam) error {
+	functionCalls := make(map[string]int)
+	functionCallOutputs := make(map[string]int)
+	var functionCallIDs []string
+	var functionCallOutputIDs []string
+
+	for _, item := range input {
+		if item.OfFunctionCall != nil {
+			callID := item.OfFunctionCall.CallID
+			if functionCalls[callID] == 0 {
+				functionCallIDs = append(functionCallIDs, callID)
+			}
+			functionCalls[callID]++
+		}
+
+		if item.OfFunctionCallOutput != nil {
+			callID := item.OfFunctionCallOutput.CallID
+			if functionCallOutputs[callID] == 0 {
+				functionCallOutputIDs = append(functionCallOutputIDs, callID)
+			}
+			functionCallOutputs[callID]++
+		}
+	}
+
+	for _, callID := range functionCallIDs {
+		if functionCalls[callID] > 1 {
+			return fmt.Errorf("openai responses prompt has duplicate function_call for call_id %q", callID)
+		}
+		if functionCallOutputs[callID] == 0 {
+			return fmt.Errorf("openai responses prompt has function_call without function_call_output for call_id %q", callID)
+		}
+	}
+
+	for _, callID := range functionCallOutputIDs {
+		if functionCallOutputs[callID] > 1 {
+			return fmt.Errorf("openai responses prompt has duplicate function_call_output for call_id %q", callID)
+		}
+		if functionCalls[callID] == 0 {
+			return fmt.Errorf("openai responses prompt has function_call_output without function_call for call_id %q", callID)
+		}
+	}
+
+	return nil
 }
 
 func hasVisibleResponsesUserContent(content responses.ResponseInputMessageContentListParam) bool {

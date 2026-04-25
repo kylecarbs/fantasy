@@ -3183,7 +3183,9 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+
+		require.NoError(t, err)
 
 		require.Len(t, input, 1, "should only have user message")
 		require.Len(t, warnings, 1)
@@ -3209,7 +3211,9 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+
+		require.NoError(t, err)
 
 		require.Len(t, input, 2, "should have both user and assistant messages")
 		require.Empty(t, warnings)
@@ -3235,11 +3239,22 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 					},
 				},
 			},
+			{
+				Role: fantasy.MessageRoleTool,
+				Content: []fantasy.MessagePart{
+					fantasy.ToolResultPart{
+						ToolCallID: "call_123",
+						Output:     fantasy.ToolResultOutputContentText{Text: "sunny"},
+					},
+				},
+			},
 		}
 
-		input, warnings := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false)
 
-		require.Len(t, input, 2, "should have both user and assistant messages")
+		require.NoError(t, err)
+
+		require.Len(t, input, 3, "should have user, assistant tool call, and tool result")
 		require.Empty(t, warnings)
 	})
 
@@ -3258,7 +3273,9 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+
+		require.NoError(t, err)
 
 		require.Empty(t, input)
 		require.Len(t, warnings, 2) // One for unsupported type, one for empty message
@@ -3280,16 +3297,28 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+
+		require.NoError(t, err)
 
 		require.Len(t, input, 1)
 		require.Empty(t, warnings)
 	})
 
-	t.Run("should keep user messages with tool results", func(t *testing.T) {
+	t.Run("should keep tool messages with matching tool results", func(t *testing.T) {
 		t.Parallel()
 
 		prompt := fantasy.Prompt{
+			{
+				Role: fantasy.MessageRoleAssistant,
+				Content: []fantasy.MessagePart{
+					fantasy.ToolCallPart{
+						ToolCallID: "call_123",
+						ToolName:   "get_weather",
+						Input:      "{\"location\":\"NYC\"}",
+					},
+				},
+			},
 			{
 				Role: fantasy.MessageRoleTool,
 				Content: []fantasy.MessagePart{
@@ -3301,16 +3330,28 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false)
 
-		require.Len(t, input, 1)
+		require.NoError(t, err)
+
+		require.Len(t, input, 2)
 		require.Empty(t, warnings)
 	})
 
-	t.Run("should keep user messages with tool error results", func(t *testing.T) {
+	t.Run("should keep tool messages with matching tool error results", func(t *testing.T) {
 		t.Parallel()
 
 		prompt := fantasy.Prompt{
+			{
+				Role: fantasy.MessageRoleAssistant,
+				Content: []fantasy.MessagePart{
+					fantasy.ToolCallPart{
+						ToolCallID: "call_456",
+						ToolName:   "get_weather",
+						Input:      "{\"location\":\"NYC\"}",
+					},
+				},
+			},
 			{
 				Role: fantasy.MessageRoleTool,
 				Content: []fantasy.MessagePart{
@@ -3322,11 +3363,14 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false)
 
-		require.Len(t, input, 1)
+		require.NoError(t, err)
+
+		require.Len(t, input, 2)
 		require.Empty(t, warnings)
 	})
+
 }
 
 func TestParseContextTooLargeError(t *testing.T) {
@@ -3955,7 +3999,9 @@ func TestResponsesToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 	t.Run("store false skips item reference", func(t *testing.T) {
 		t.Parallel()
 
-		input, warnings := toResponsesPrompt(prompt, "system instructions", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system instructions", false)
+
+		require.NoError(t, err)
 
 		require.Empty(t, warnings)
 		require.Len(t, input, 2,
@@ -3964,16 +4010,18 @@ func TestResponsesToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 		require.Nil(t, input[1].OfItemReference)
 	})
 
-	t.Run("store true uses item reference", func(t *testing.T) {
+	t.Run("store true skips item reference", func(t *testing.T) {
 		t.Parallel()
 
-		input, warnings := toResponsesPrompt(prompt, "system instructions", true)
+		input, warnings, err := toResponsesPrompt(prompt, "system instructions", true)
+
+		require.NoError(t, err)
 
 		require.Empty(t, warnings)
-		require.Len(t, input, 3,
-			"expected user + item_reference + assistant text when store=true")
-		require.NotNil(t, input[1].OfItemReference)
-		require.Equal(t, "ws_01", input[1].OfItemReference.ID)
+		require.Len(t, input, 2,
+			"expected user + assistant text when store=true")
+		require.Nil(t, input[0].OfItemReference)
+		require.Nil(t, input[1].OfItemReference)
 	})
 }
 
@@ -4019,7 +4067,9 @@ func TestResponsesToPrompt_ReasoningWithStore(t *testing.T) {
 	t.Run("store true skips reasoning", func(t *testing.T) {
 		t.Parallel()
 
-		input, warnings := toResponsesPrompt(prompt, "system", true)
+		input, warnings, err := toResponsesPrompt(prompt, "system", true)
+
+		require.NoError(t, err)
 		require.Empty(t, warnings)
 
 		// With store=true: user, assistant text (reasoning
@@ -4036,7 +4086,9 @@ func TestResponsesToPrompt_ReasoningWithStore(t *testing.T) {
 	t.Run("store false skips reasoning", func(t *testing.T) {
 		t.Parallel()
 
-		input, warnings := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+
+		require.NoError(t, err)
 		require.Empty(t, warnings)
 
 		// With store=false: user, assistant text, follow-up user.
