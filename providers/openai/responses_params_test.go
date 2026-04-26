@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"charm.land/fantasy"
+	"github.com/charmbracelet/openai-go/responses"
 	"github.com/stretchr/testify/require"
 )
 
@@ -439,6 +440,17 @@ func TestPrepareParams_ValidatesFunctionCallOutputPairing(t *testing.T) {
 		require.Empty(t, warnings)
 	})
 
+	t.Run("output before local call", func(t *testing.T) {
+		t.Parallel()
+
+		_, warnings, err := lm.prepareParams(testCall(fantasy.Prompt{
+			testResponsesToolResultMessage("call_late", "done"),
+			testResponsesToolCallMessage("call_late"),
+		}, nil))
+		require.EqualError(t, err, `openai responses prompt has function_call_output before function_call for call_id "call_late"`)
+		require.Empty(t, warnings)
+	})
+
 	t.Run("duplicate local calls", func(t *testing.T) {
 		t.Parallel()
 
@@ -471,6 +483,40 @@ func TestPrepareParams_ValidatesFunctionCallOutputPairing(t *testing.T) {
 		}, nil))
 		require.EqualError(t, err, `openai responses prompt has function_call without function_call_output for call_id "call_provider_result"`)
 		require.Empty(t, warnings)
+	})
+}
+
+func TestValidateResponsesInput_WebSearchReferenceRequiresReasoning(t *testing.T) {
+	t.Parallel()
+
+	t.Run("valid reasoning and web search references", func(t *testing.T) {
+		t.Parallel()
+
+		err := validateResponsesInput(responses.ResponseInputParam{
+			responses.ResponseInputItemParamOfItemReference("rs_valid"),
+			responses.ResponseInputItemParamOfItemReference("ws_valid"),
+		})
+		require.NoError(t, err)
+	})
+
+	t.Run("web search reference without reasoning", func(t *testing.T) {
+		t.Parallel()
+
+		err := validateResponsesInput(responses.ResponseInputParam{
+			responses.ResponseInputItemParamOfItemReference("ws_orphan"),
+		})
+		require.EqualError(t, err, `openai responses prompt has web_search_call item_reference without preceding reasoning item_reference for item_id "ws_orphan"`)
+	})
+
+	t.Run("web search reference after non-reference item", func(t *testing.T) {
+		t.Parallel()
+
+		err := validateResponsesInput(responses.ResponseInputParam{
+			responses.ResponseInputItemParamOfItemReference("rs_valid"),
+			responses.ResponseInputItemParamOfMessage("text", responses.EasyInputMessageRoleAssistant),
+			responses.ResponseInputItemParamOfItemReference("ws_orphan"),
+		})
+		require.EqualError(t, err, `openai responses prompt has web_search_call item_reference without preceding reasoning item_reference for item_id "ws_orphan"`)
 	})
 }
 

@@ -516,6 +516,7 @@ func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bo
 
 		case fantasy.MessageRoleAssistant:
 			startIdx := len(input)
+			lastEmittedReasoningReference := false
 			for _, c := range msg.Content {
 				switch c.GetType() {
 				case fantasy.ContentTypeText:
@@ -528,6 +529,7 @@ func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bo
 						continue
 					}
 					input = append(input, responses.ResponseInputItemParamOfMessage(textPart.Text, responses.EasyInputMessageRoleAssistant))
+					lastEmittedReasoningReference = false
 
 				case fantasy.ContentTypeToolCall:
 					toolCallPart, ok := fantasy.AsContentType[fantasy.ToolCallPart](c)
@@ -540,9 +542,12 @@ func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bo
 					}
 
 					if toolCallPart.ProviderExecuted {
-						// Manual replay cannot safely reference stored
-						// provider-executed items without previous_response_id.
-						// Skip them, matching provider-executed tool results.
+						if store && lastEmittedReasoningReference &&
+							isResponsesWebSearchToolCall(toolCallPart) &&
+							toolCallPart.ToolCallID != "" {
+							input = append(input, responses.ResponseInputItemParamOfItemReference(toolCallPart.ToolCallID))
+						}
+						lastEmittedReasoningReference = false
 						continue
 					}
 
@@ -556,21 +561,35 @@ func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bo
 					}
 
 					input = append(input, responses.ResponseInputItemParamOfFunctionCall(string(inputJSON), toolCallPart.ToolCallID, toolCallPart.ToolName))
+					lastEmittedReasoningReference = false
 				case fantasy.ContentTypeSource:
 					// Source citations from web search are not a
 					// recognised Responses API input type; skip.
 					continue
 				case fantasy.ContentTypeReasoning:
-					// Reasoning items are always skipped during replay.
-					// When store is enabled, the API already has them
-					// persisted server-side. When store is disabled, the
-					// item IDs are ephemeral and referencing them causes
-					// "Item not found" errors. In both cases, replaying
-					// reasoning inline is not supported by the API.
+					lastEmittedReasoningReference = false
+					if !store {
+						// When store is disabled, server-side reasoning
+						// items are ephemeral and cannot be referenced.
+						continue
+					}
+					reasoningPart, ok := fantasy.AsContentType[fantasy.ReasoningPart](c)
+					if !ok {
+						warnings = append(warnings, fantasy.CallWarning{
+							Type:    fantasy.CallWarningTypeOther,
+							Message: "assistant reasoning part does not have the right type",
+						})
+						continue
+					}
+					meta := GetReasoningMetadata(reasoningPart.ProviderOptions)
+					if meta == nil || meta.ItemID == "" {
+						continue
+					}
+					input = append(input, responses.ResponseInputItemParamOfItemReference(meta.ItemID))
+					lastEmittedReasoningReference = true
 					continue
 				}
 			}
-
 			if !hasVisibleResponsesAssistantContent(input, startIdx) {
 				warnings = append(warnings, fantasy.CallWarning{
 					Type:    fantasy.CallWarningTypeOther,
@@ -636,55 +655,113 @@ func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bo
 		}
 	}
 
-	if err := validateResponsesFunctionCallOutputs(input); err != nil {
+	if err := validateResponsesInput(input); err != nil {
 		return nil, warnings, err
 	}
 
 	return input, warnings, nil
 }
 
-func validateResponsesFunctionCallOutputs(input responses.ResponseInputParam) error {
-	functionCalls := make(map[string]int)
-	functionCallOutputs := make(map[string]int)
-	var functionCallIDs []string
-	var functionCallOutputIDs []string
+func isResponsesWebSearchToolCall(toolCallPart fantasy.ToolCallPart) bool {
+	return toolCallPart.ToolName == "web_search" ||
+		toolCallPart.ToolName == "web_search_preview"
+}
 
-	for _, item := range input {
+func validateResponsesInput(input responses.ResponseInputParam) error {
+	if err := validateResponsesFunctionCallOutputs(input); err != nil {
+		return err
+	}
+	return validateResponsesItemReferences(input)
+}
+
+func validateResponsesFunctionCallOutputs(input responses.ResponseInputParam) error {
+	type callState struct {
+		calls       int
+		outputs     int
+		firstCall   int
+		firstOutput int
+	}
+	states := make(map[string]*callState)
+	var callIDs []string
+	var outputIDs []string
+
+	stateFor := func(callID string) *callState {
+		state, ok := states[callID]
+		if ok {
+			return state
+		}
+		state = &callState{firstCall: -1, firstOutput: -1}
+		states[callID] = state
+		return state
+	}
+
+	for index, item := range input {
 		if item.OfFunctionCall != nil {
 			callID := item.OfFunctionCall.CallID
-			if functionCalls[callID] == 0 {
-				functionCallIDs = append(functionCallIDs, callID)
+			state := stateFor(callID)
+			if state.calls == 0 {
+				callIDs = append(callIDs, callID)
+				state.firstCall = index
 			}
-			functionCalls[callID]++
+			state.calls++
 		}
 
 		if item.OfFunctionCallOutput != nil {
 			callID := item.OfFunctionCallOutput.CallID
-			if functionCallOutputs[callID] == 0 {
-				functionCallOutputIDs = append(functionCallOutputIDs, callID)
+			state := stateFor(callID)
+			if state.outputs == 0 {
+				outputIDs = append(outputIDs, callID)
+				state.firstOutput = index
 			}
-			functionCallOutputs[callID]++
+			state.outputs++
 		}
 	}
 
-	for _, callID := range functionCallIDs {
-		if functionCalls[callID] > 1 {
+	for _, callID := range callIDs {
+		state := states[callID]
+		if state.calls > 1 {
 			return fmt.Errorf("openai responses prompt has duplicate function_call for call_id %q", callID)
 		}
-		if functionCallOutputs[callID] == 0 {
+	}
+	for _, callID := range outputIDs {
+		state := states[callID]
+		if state.outputs > 1 {
+			return fmt.Errorf("openai responses prompt has duplicate function_call_output for call_id %q", callID)
+		}
+	}
+	for _, callID := range outputIDs {
+		state := states[callID]
+		if state.calls == 0 {
+			return fmt.Errorf("openai responses prompt has function_call_output without function_call for call_id %q", callID)
+		}
+		if state.firstOutput < state.firstCall {
+			return fmt.Errorf("openai responses prompt has function_call_output before function_call for call_id %q", callID)
+		}
+	}
+	for _, callID := range callIDs {
+		state := states[callID]
+		if state.outputs == 0 {
 			return fmt.Errorf("openai responses prompt has function_call without function_call_output for call_id %q", callID)
 		}
 	}
 
-	for _, callID := range functionCallOutputIDs {
-		if functionCallOutputs[callID] > 1 {
-			return fmt.Errorf("openai responses prompt has duplicate function_call_output for call_id %q", callID)
-		}
-		if functionCalls[callID] == 0 {
-			return fmt.Errorf("openai responses prompt has function_call_output without function_call for call_id %q", callID)
-		}
-	}
+	return nil
+}
 
+func validateResponsesItemReferences(input responses.ResponseInputParam) error {
+	previousReferenceID := ""
+	for _, item := range input {
+		if item.OfItemReference == nil {
+			previousReferenceID = ""
+			continue
+		}
+
+		itemID := item.OfItemReference.ID
+		if strings.HasPrefix(itemID, "ws_") && !strings.HasPrefix(previousReferenceID, "rs_") {
+			return fmt.Errorf("openai responses prompt has web_search_call item_reference without preceding reasoning item_reference for item_id %q", itemID)
+		}
+		previousReferenceID = itemID
+	}
 	return nil
 }
 
