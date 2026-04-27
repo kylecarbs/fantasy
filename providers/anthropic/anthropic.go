@@ -39,9 +39,9 @@ func betaRequestOptions(flags []string) []option.RequestOption {
 }
 
 // buildRequestOptions constructs the common request options shared
-// by Generate and Stream: user-agent, raw tool injection, and any
-// beta API flags.
-func buildRequestOptions(call fantasy.Call, rawTools []json.RawMessage, betaFlags []string) []option.RequestOption {
+// by Generate and Stream: user-agent, raw tool injection, any
+// beta API flags, and Bedrock-specific overrides.
+func buildRequestOptions(call fantasy.Call, rawTools []json.RawMessage, betaFlags []string, bedrockSystem string) []option.RequestOption {
 	reqOpts := callUARequestOptions(call)
 	if len(rawTools) > 0 {
 		// Tools are injected as raw JSON rather than via params.Tools
@@ -52,6 +52,9 @@ func buildRequestOptions(call fantasy.Call, rawTools []json.RawMessage, betaFlag
 	}
 	if len(betaFlags) > 0 {
 		reqOpts = append(reqOpts, betaRequestOptions(betaFlags)...)
+	}
+	if bedrockSystem != "" {
+		reqOpts = append(reqOpts, option.WithJSONSet("system", bedrockSystem))
 	}
 	return reqOpts
 }
@@ -272,6 +275,7 @@ func (a languageModel) prepareParams(call fantasy.Call) (
 	rawTools []json.RawMessage,
 	warnings []fantasy.CallWarning,
 	betaFlags []string,
+	bedrockSystem string,
 	err error,
 ) {
 	params = &anthropic.MessageNewParams{}
@@ -279,7 +283,7 @@ func (a languageModel) prepareParams(call fantasy.Call) (
 	if v, ok := call.ProviderOptions[Name]; ok {
 		providerOptions, ok = v.(*ProviderOptions)
 		if !ok {
-			return nil, nil, nil, nil, &fantasy.Error{Title: "invalid argument", Message: "anthropic provider options should be *anthropic.ProviderOptions"}
+			return nil, nil, nil, nil, "", &fantasy.Error{Title: "invalid argument", Message: "anthropic provider options should be *anthropic.ProviderOptions"}
 		}
 	}
 	sendReasoning := true
@@ -287,6 +291,12 @@ func (a languageModel) prepareParams(call fantasy.Call) (
 		sendReasoning = *providerOptions.SendReasoning
 	}
 	systemBlocks, messages, warnings := toPrompt(call.Prompt, sendReasoning)
+
+	if a.options.useBedrock {
+		if flattened, ok := flattenSystemForBedrock(systemBlocks); ok {
+			bedrockSystem = flattened
+		}
+	}
 
 	if call.FrequencyPenalty != nil {
 		warnings = append(warnings, fantasy.CallWarning{
@@ -302,6 +312,9 @@ func (a languageModel) prepareParams(call fantasy.Call) (
 	}
 
 	params.System = systemBlocks
+	if bedrockSystem != "" {
+		params.System = nil
+	}
 	params.Messages = messages
 	params.Model = anthropic.Model(a.modelID)
 	params.MaxTokens = 4096
@@ -330,7 +343,7 @@ func (a languageModel) prepareParams(call fantasy.Call) (
 		params.Thinking.OfAdaptive = &adaptive
 	case providerOptions.Thinking != nil:
 		if providerOptions.Thinking.BudgetTokens == 0 {
-			return nil, nil, nil, nil, &fantasy.Error{Title: "no budget", Message: "thinking requires budget"}
+			return nil, nil, nil, nil, "", &fantasy.Error{Title: "no budget", Message: "thinking requires budget"}
 		}
 		params.Thinking = anthropic.ThinkingConfigParamOfEnabled(providerOptions.Thinking.BudgetTokens)
 		if call.Temperature != nil {
@@ -373,7 +386,7 @@ func (a languageModel) prepareParams(call fantasy.Call) (
 		warnings = append(warnings, toolWarnings...)
 	}
 
-	return params, rawTools, warnings, betaFlags, nil
+	return params, rawTools, warnings, betaFlags, bedrockSystem, nil
 }
 
 func (a *provider) Name() string {
@@ -1106,11 +1119,11 @@ func mapFinishReason(finishReason string) fantasy.FinishReason {
 
 // Generate implements fantasy.LanguageModel.
 func (a languageModel) Generate(ctx context.Context, call fantasy.Call) (*fantasy.Response, error) {
-	params, rawTools, warnings, betaFlags, err := a.prepareParams(call)
+	params, rawTools, warnings, betaFlags, bedrockSystem, err := a.prepareParams(call)
 	if err != nil {
 		return nil, err
 	}
-	reqOpts := buildRequestOptions(call, rawTools, betaFlags)
+	reqOpts := buildRequestOptions(call, rawTools, betaFlags, bedrockSystem)
 
 	response, err := a.client.Messages.New(ctx, *params, reqOpts...)
 	if err != nil {
@@ -1235,12 +1248,12 @@ func (a languageModel) Generate(ctx context.Context, call fantasy.Call) (*fantas
 
 // Stream implements fantasy.LanguageModel.
 func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.StreamResponse, error) {
-	params, rawTools, warnings, betaFlags, err := a.prepareParams(call)
+	params, rawTools, warnings, betaFlags, bedrockSystem, err := a.prepareParams(call)
 	if err != nil {
 		return nil, err
 	}
 
-	reqOpts := buildRequestOptions(call, rawTools, betaFlags)
+	reqOpts := buildRequestOptions(call, rawTools, betaFlags, bedrockSystem)
 
 	stream := a.client.Messages.NewStreaming(ctx, *params, reqOpts...)
 	acc := anthropic.Message{}

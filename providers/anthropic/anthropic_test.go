@@ -504,6 +504,121 @@ func TestStream_SendsOutputConfigEffort(t *testing.T) {
 	requireAnthropicEffort(t, call.body, EffortHigh)
 }
 
+func TestBedrockSystemPromptWireShape(t *testing.T) {
+	t.Parallel()
+
+	singleSystemPrompt := fantasy.Prompt{
+		{
+			Role: fantasy.MessageRoleSystem,
+			Content: []fantasy.MessagePart{
+				fantasy.TextPart{Text: "you are helpful"},
+			},
+		},
+		{
+			Role: fantasy.MessageRoleUser,
+			Content: []fantasy.MessagePart{
+				fantasy.TextPart{Text: "hello"},
+			},
+		},
+	}
+	promptCases := []struct {
+		name       string
+		prompt     fantasy.Prompt
+		wantSystem string
+	}{
+		{
+			name:       "single system message",
+			prompt:     singleSystemPrompt,
+			wantSystem: "you are helpful",
+		},
+		{
+			name: "three consecutive system messages",
+			prompt: fantasy.Prompt{
+				{
+					Role: fantasy.MessageRoleSystem,
+					Content: []fantasy.MessagePart{
+						fantasy.TextPart{Text: "first instruction"},
+					},
+				},
+				{
+					Role: fantasy.MessageRoleSystem,
+					Content: []fantasy.MessagePart{
+						fantasy.TextPart{Text: "second instruction"},
+					},
+				},
+				{
+					Role: fantasy.MessageRoleSystem,
+					Content: []fantasy.MessagePart{
+						fantasy.TextPart{Text: "third instruction"},
+					},
+				},
+				{
+					Role: fantasy.MessageRoleUser,
+					Content: []fantasy.MessagePart{
+						fantasy.TextPart{Text: "hello"},
+					},
+				},
+			},
+			wantSystem: "first instruction\n\nsecond instruction\n\nthird instruction",
+		},
+		{
+			name: "non contiguous system prompt keeps first block only",
+			prompt: fantasy.Prompt{
+				{
+					Role: fantasy.MessageRoleSystem,
+					Content: []fantasy.MessagePart{
+						fantasy.TextPart{Text: "first instruction"},
+					},
+				},
+				{
+					Role: fantasy.MessageRoleUser,
+					Content: []fantasy.MessagePart{
+						fantasy.TextPart{Text: "hello"},
+					},
+				},
+				{
+					Role: fantasy.MessageRoleSystem,
+					Content: []fantasy.MessagePart{
+						fantasy.TextPart{Text: "ignored instruction"},
+					},
+				},
+			},
+			wantSystem: "first instruction",
+		},
+	}
+	callers := []struct {
+		name    string
+		capture func(t *testing.T, prompt fantasy.Prompt, opts ...Option) map[string]any
+	}{
+		{name: "generate", capture: captureAnthropicGenerateRequestBody},
+		{name: "stream", capture: captureAnthropicStreamRequestBody},
+	}
+
+	for _, promptCase := range promptCases {
+		promptCase := promptCase
+		t.Run(promptCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			for _, caller := range callers {
+				caller := caller
+				t.Run(caller.name, func(t *testing.T) {
+					t.Parallel()
+
+					body := caller.capture(t, promptCase.prompt, WithBedrock(), WithSkipAuth(true))
+					requireAnthropicSystemString(t, body, promptCase.wantSystem)
+				})
+			}
+		})
+	}
+
+	t.Run("direct anthropic keeps system blocks", func(t *testing.T) {
+		t.Parallel()
+
+		body := captureAnthropicGenerateRequestBody(t, singleSystemPrompt, WithAPIKey("test-api-key"))
+		requireAnthropicSystemBlocks(t, body, []string{"you are helpful"})
+	})
+}
+
 type anthropicCall struct {
 	method string
 	path   string
@@ -593,6 +708,75 @@ func requireAnthropicEffort(t *testing.T, body map[string]any, expected Effort) 
 	require.True(t, ok)
 	require.Equal(t, string(expected), outputConfig["effort"])
 	require.Equal(t, "adaptive", thinking["type"])
+}
+
+func captureAnthropicGenerateRequestBody(t *testing.T, prompt fantasy.Prompt, opts ...Option) map[string]any {
+	t.Helper()
+
+	server, calls := newAnthropicJSONServer(mockAnthropicGenerateResponse())
+	defer server.Close()
+
+	providerOptions := append([]Option{}, opts...)
+	providerOptions = append(providerOptions, WithBaseURL(server.URL))
+	provider, err := New(providerOptions...)
+	require.NoError(t, err)
+
+	model, err := provider.LanguageModel(context.Background(), "claude-sonnet-4-20250514")
+	require.NoError(t, err)
+
+	_, err = model.Generate(context.Background(), fantasy.Call{Prompt: prompt})
+	require.NoError(t, err)
+
+	return awaitAnthropicCall(t, calls).body
+}
+
+func captureAnthropicStreamRequestBody(t *testing.T, prompt fantasy.Prompt, opts ...Option) map[string]any {
+	t.Helper()
+
+	server, calls := newAnthropicStreamingServer([]string{
+		"event: message_start\n",
+		"data: {\"type\":\"message_start\",\"message\":{}}\n\n",
+		"event: message_stop\n",
+		"data: {\"type\":\"message_stop\"}\n\n",
+	})
+	defer server.Close()
+
+	providerOptions := append([]Option{}, opts...)
+	providerOptions = append(providerOptions, WithBaseURL(server.URL))
+	provider, err := New(providerOptions...)
+	require.NoError(t, err)
+
+	model, err := provider.LanguageModel(context.Background(), "claude-sonnet-4-20250514")
+	require.NoError(t, err)
+
+	stream, err := model.Stream(context.Background(), fantasy.Call{Prompt: prompt})
+	require.NoError(t, err)
+
+	stream(func(fantasy.StreamPart) bool { return true })
+
+	return awaitAnthropicCall(t, calls).body
+}
+
+func requireAnthropicSystemString(t *testing.T, body map[string]any, expected string) {
+	t.Helper()
+
+	system, ok := body["system"].(string)
+	require.Truef(t, ok, "expected system to be a JSON string, got %T (%#v)", body["system"], body["system"])
+	require.Equal(t, expected, system)
+}
+
+func requireAnthropicSystemBlocks(t *testing.T, body map[string]any, expected []string) {
+	t.Helper()
+
+	system, ok := body["system"].([]any)
+	require.Truef(t, ok, "expected system to be a JSON array, got %T (%#v)", body["system"], body["system"])
+	require.Len(t, system, len(expected))
+	for i, want := range expected {
+		block, ok := system[i].(map[string]any)
+		require.Truef(t, ok, "expected system[%d] to be an object, got %T (%#v)", i, system[i], system[i])
+		require.Equal(t, want, block["text"])
+		require.Equal(t, "text", block["type"])
+	}
 }
 
 func testPrompt() fantasy.Prompt {
@@ -1574,7 +1758,8 @@ func TestComputerUseToolJSON(t *testing.T) {
 		}
 		_, err := computerUseToolJSON(pdt)
 		require.Error(t, err)
-			require.Contains(t, err.Error(), "tool_version arg is missing")	})
+		require.Contains(t, err.Error(), "tool_version arg is missing")
+	})
 
 	t.Run("returns error for unsupported version", func(t *testing.T) {
 		t.Parallel()
