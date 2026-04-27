@@ -4496,3 +4496,221 @@ func TestResponsesStream_PreviousResponseIDOption(t *testing.T) {
 	require.Equal(t, "/responses", sms.calls[0].path)
 	require.Equal(t, "resp_prev_456", sms.calls[0].body["previous_response_id"])
 }
+
+func TestComputerUseGenerateRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer()
+	defer server.close()
+
+	// Step 0: model returns a computer_call.
+	server.response = map[string]any{
+		"id":     "resp_01",
+		"object": "response",
+		"model":  "gpt-4.1",
+		"output": []any{
+			map[string]any{
+				"type":    "computer_call",
+				"id":      "cu_01",
+				"call_id": "call_01",
+				"actions": []any{
+					map[string]any{
+						"type": "screenshot",
+					},
+				},
+				"status": "completed",
+			},
+		},
+		"status": "completed",
+		"usage": map[string]any{
+			"input_tokens":  10,
+			"output_tokens": 5,
+			"total_tokens":  15,
+		},
+	}
+
+	model := newResponsesProvider(t, server.server.URL)
+
+	resp, err := model.Generate(context.Background(), fantasy.Call{
+		Prompt: testPrompt,
+		Tools:  []fantasy.Tool{NewComputerUseTool(nil)},
+	})
+	require.NoError(t, err)
+	require.Equal(t, fantasy.FinishReasonToolCalls, resp.FinishReason)
+
+	// Extract the computer tool call.
+	var toolCall fantasy.ToolCallContent
+	for _, c := range resp.Content {
+		if tc, ok := c.(fantasy.ToolCallContent); ok && tc.ToolName == "computer" {
+			toolCall = tc
+			break
+		}
+	}
+	require.NotEmpty(t, toolCall.ToolCallID)
+
+	// Verify ComputerUseMetadata is present.
+	metaVal, ok := toolCall.ProviderMetadata[Name]
+	require.True(t, ok, "expected ComputerUseMetadata")
+	cuMeta, ok := metaVal.(*ComputerUseMetadata)
+	require.True(t, ok)
+	require.NotEmpty(t, cuMeta.RawJSON)
+
+	// Step 1: model returns text.
+	server.response = map[string]any{
+		"id":     "resp_02",
+		"object": "response",
+		"model":  "gpt-4.1",
+		"output": []any{
+			map[string]any{
+				"type":   "message",
+				"id":     "msg_01",
+				"role":   "assistant",
+				"status": "completed",
+				"content": []any{
+					map[string]any{
+						"type": "output_text",
+						"text": "Done!",
+					},
+				},
+			},
+		},
+		"status": "completed",
+		"usage": map[string]any{
+			"input_tokens":  20,
+			"output_tokens": 10,
+			"total_tokens":  30,
+		},
+	}
+
+	// Build prompt for second call with the computer_call + screenshot.
+	screenshotData := base64.StdEncoding.EncodeToString([]byte{0x89, 0x50, 0x4E, 0x47})
+	prompt2 := fantasy.Prompt{
+		{
+			Role: fantasy.MessageRoleUser,
+			Content: []fantasy.MessagePart{
+				fantasy.TextPart{Text: "Hello"},
+			},
+		},
+		{
+			Role: fantasy.MessageRoleAssistant,
+			Content: []fantasy.MessagePart{
+				fantasy.ToolCallPart{
+					ToolCallID: toolCall.ToolCallID,
+					ToolName:   "computer",
+					Input:      toolCall.Input,
+					ProviderOptions: fantasy.ProviderOptions{
+						Name: &ComputerUseMetadata{RawJSON: cuMeta.RawJSON},
+					},
+				},
+			},
+		},
+		{
+			Role: fantasy.MessageRoleTool,
+			Content: []fantasy.MessagePart{
+				fantasy.ToolResultPart{
+					ToolCallID: toolCall.ToolCallID,
+					Output: fantasy.ToolResultOutputContentMedia{
+						Data:      screenshotData,
+						MediaType: "image/png",
+					},
+				},
+			},
+		},
+	}
+
+	resp2, err := model.Generate(context.Background(), fantasy.Call{
+		Prompt: prompt2,
+		Tools:  []fantasy.Tool{NewComputerUseTool(nil)},
+	})
+	require.NoError(t, err)
+	require.Len(t, resp2.Content, 1)
+
+	// Inspect the second request body.
+	require.Len(t, server.calls, 2)
+	secondBody := server.calls[1].body
+	input, ok := secondBody["input"].([]any)
+	require.True(t, ok)
+
+	// Find computer_call and computer_call_output items.
+	var foundComputerCall, foundComputerCallOutput bool
+	for _, item := range input {
+		itemMap, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch itemMap["type"] {
+		case "computer_call":
+			foundComputerCall = true
+			require.Equal(t, "call_01", itemMap["call_id"])
+		case "computer_call_output":
+			foundComputerCallOutput = true
+			require.Equal(t, toolCall.ToolCallID, itemMap["call_id"])
+			// Verify the output contains the screenshot.
+			output, ok := itemMap["output"].(map[string]any)
+			require.True(t, ok)
+			imageURL, ok := output["image_url"].(string)
+			require.True(t, ok)
+			require.True(t, strings.HasPrefix(imageURL, "data:image/png;base64,"),
+				"image_url should be a data URI, got: %s", imageURL)
+		}
+	}
+	require.True(t, foundComputerCall, "expected computer_call in input")
+	require.True(t, foundComputerCallOutput, "expected computer_call_output in input")
+}
+
+func TestComputerUseGenerateRoundTrip_NonImageResult(t *testing.T) {
+	t.Parallel()
+
+	// Build a prompt where the tool result is text, not image.
+	rawJSON := `{"type":"computer_call","call_id":"call_01","actions":[{"type":"screenshot"}],"id":"cu_01","status":"completed"}`
+	prompt := fantasy.Prompt{
+		{
+			Role: fantasy.MessageRoleUser,
+			Content: []fantasy.MessagePart{
+				fantasy.TextPart{Text: "Hello"},
+			},
+		},
+		{
+			Role: fantasy.MessageRoleAssistant,
+			Content: []fantasy.MessagePart{
+				fantasy.ToolCallPart{
+					ToolCallID: "call_01",
+					ToolName:   "computer",
+					Input:      `{"call_id":"call_01","actions":[{"type":"screenshot"}]}`,
+					ProviderOptions: fantasy.ProviderOptions{
+						Name: &ComputerUseMetadata{RawJSON: rawJSON},
+					},
+				},
+			},
+		},
+		{
+			Role: fantasy.MessageRoleTool,
+			Content: []fantasy.MessagePart{
+				fantasy.ToolResultPart{
+					ToolCallID: "call_01",
+					Output: fantasy.ToolResultOutputContentText{
+						Text: "some text result",
+					},
+				},
+			},
+		},
+	}
+
+	input, warnings := toResponsesPrompt(prompt, "system", false)
+
+	// Should warn about non-image result.
+	var foundWarning bool
+	for _, w := range warnings {
+		if strings.Contains(w.Message, "computer_call_output requires image result") {
+			foundWarning = true
+			break
+		}
+	}
+	require.True(t, foundWarning, "expected warning about non-image result, got: %v", warnings)
+
+	// No computer_call_output should be in the input.
+	for _, item := range input {
+		require.Nil(t, item.OfComputerCallOutput,
+			"should not have computer_call_output for non-image result")
+	}
+}

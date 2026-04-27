@@ -137,14 +137,18 @@ func TestPrepareParams_PreviousResponseID_Validation(t *testing.T) {
 		require.Empty(t, warnings)
 	})
 
-	t.Run("rejects tool messages", func(t *testing.T) {
+	t.Run("allows tool messages", func(t *testing.T) {
 		t.Parallel()
 
-		_, _, err := lm.prepareParams(testCall(fantasy.Prompt{
+		// The OpenAI Responses API supports computer_call_output
+		// (and function call_output) items as the next-turn input
+		// alongside previous_response_id.
+		_, warnings, err := lm.prepareParams(testCall(fantasy.Prompt{
 			testToolResultMessage("done"),
 			testTextMessage(fantasy.MessageRoleUser, "hello"),
 		}, opts))
-		require.EqualError(t, err, previousResponseIDHistoryError)
+		require.NoError(t, err)
+		_ = warnings
 	})
 
 	t.Run("rejects without store", func(t *testing.T) {
@@ -214,12 +218,11 @@ func TestValidatePreviousResponseIDPrompt(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "contains tool message",
+			name: "tool message before user",
 			prompt: fantasy.Prompt{
 				testToolResultMessage("done"),
 				testTextMessage(fantasy.MessageRoleUser, "follow up"),
 			},
-			wantErr: true,
 		},
 	}
 
