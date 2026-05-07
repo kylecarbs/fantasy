@@ -1139,15 +1139,6 @@ func responsesStreamClosedBeforeTerminalEventError(err error) error {
 }
 
 func responsesFailedStreamError(response responses.Response) error {
-	if response.Error.Message == "" && response.Error.Code == "" {
-		return fmt.Errorf("response failed")
-	}
-	if response.Error.Code == "" {
-		return fmt.Errorf("response failed: %s", response.Error.Message)
-	}
-	if response.Error.Message == "" {
-		return fmt.Errorf("response failed (code: %s)", response.Error.Code)
-	}
 	return fmt.Errorf("response failed: %s (code: %s)", response.Error.Message, response.Error.Code)
 }
 
@@ -1486,7 +1477,6 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 
 			case "response.failed":
 				failed := event.AsResponseFailed()
-				responseID = failed.Response.ID
 				if !yield(fantasy.StreamPart{
 					Type:  fantasy.StreamPartTypeError,
 					Error: responsesFailedStreamError(failed.Response),
@@ -1868,7 +1858,6 @@ func (o responsesLanguageModel) streamObjectWithJSONMode(ctx context.Context, ca
 
 			case "response.failed":
 				failed := event.AsResponseFailed()
-				responseID = failed.Response.ID
 				streamErr = responsesFailedStreamError(failed.Response)
 				if !yield(fantasy.ObjectStreamPart{
 					Type:  fantasy.ObjectStreamPartTypeError,

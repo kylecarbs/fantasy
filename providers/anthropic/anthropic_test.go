@@ -523,6 +523,7 @@ func TestStream_RequiresMessageStopBeforeFinish(t *testing.T) {
 		chunks     []string
 		wantFinish bool
 		wantEOF    bool
+		wantError  string
 	}{
 		{
 			name:       "complete stream finishes",
@@ -530,20 +531,20 @@ func TestStream_RequiresMessageStopBeforeFinish(t *testing.T) {
 			wantFinish: true,
 		},
 		{
-			name:    "eof before message stop returns retryable error",
+			name:    "eof before message_stop returns EOF error",
 			chunks:  truncatedTextStream,
 			wantEOF: true,
 		},
 		{
-			name:    "empty stream returns retryable error",
+			name:    "empty stream returns EOF error",
 			wantEOF: true,
 		},
 		{
-			name: "malformed stream keeps existing error path",
+			name: "error event keeps existing error path",
 			chunks: []string{
-				"event: message_start\n",
-				"data: {not-json}\n\n",
+				anthropicSSEEvent("error", `{"type":"error","error":{"type":"overloaded_error","message":"stream down"}}`),
 			},
+			wantError: "stream down",
 		},
 	}
 
@@ -589,6 +590,7 @@ func TestStream_RequiresMessageStopBeforeFinish(t *testing.T) {
 				require.Contains(t, errorParts[0].Error.Error(), "message_stop")
 			} else {
 				require.NotContains(t, errorParts[0].Error.Error(), "message_stop")
+				require.Contains(t, errorParts[0].Error.Error(), tt.wantError)
 			}
 		})
 	}

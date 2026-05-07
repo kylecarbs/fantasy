@@ -4360,6 +4360,7 @@ func TestResponsesStream_RequiresTerminalEventBeforeFinish(t *testing.T) {
 	completedEvent := responsesSSEEvent("response.completed", `{"type":"response.completed","response":{"id":"resp_01","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`)
 	incompleteEvent := responsesSSEEvent("response.incomplete", `{"type":"response.incomplete","response":{"id":"resp_02","status":"incomplete","output":[],"incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`)
 	failedEvent := responsesSSEEvent("response.failed", `{"type":"response.failed","response":{"id":"resp_03","status":"failed","error":{"code":"server_error","message":"boom"},"output":[]}}`)
+	errorEvent := responsesSSEEvent("error", `{"type":"error","message":"stream down","code":"server_error"}`)
 
 	tests := []struct {
 		name             string
@@ -4379,12 +4380,12 @@ func TestResponsesStream_RequiresTerminalEventBeforeFinish(t *testing.T) {
 			wantFinishReason: fantasy.FinishReasonLength,
 		},
 		{
-			name:    "eof before terminal event returns retryable error",
+			name:    "eof before terminal event returns EOF error",
 			chunks:  textChunks,
 			wantEOF: true,
 		},
 		{
-			name:    "empty stream returns retryable error",
+			name:    "empty stream returns EOF error",
 			wantEOF: true,
 		},
 		{
@@ -4393,9 +4394,9 @@ func TestResponsesStream_RequiresTerminalEventBeforeFinish(t *testing.T) {
 			wantError: "boom",
 		},
 		{
-			name:      "malformed stream keeps existing error path",
-			chunks:    []string{responsesSSEEvent("response.output_text.delta", `{not-json}`)},
-			wantError: "invalid",
+			name:      "error event keeps existing error path",
+			chunks:    []string{errorEvent},
+			wantError: "stream down",
 		},
 	}
 
@@ -4457,6 +4458,7 @@ func TestResponsesStreamObject_RequiresTerminalEventBeforeFinish(t *testing.T) {
 	}
 	completedEvent := responsesSSEEvent("response.completed", `{"type":"response.completed","response":{"id":"resp_01","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`)
 	failedEvent := responsesSSEEvent("response.failed", `{"type":"response.failed","response":{"id":"resp_02","status":"failed","error":{"code":"server_error","message":"boom"},"output":[]}}`)
+	errorEvent := responsesSSEEvent("error", `{"type":"error","message":"stream down","code":"server_error"}`)
 
 	tests := []struct {
 		name       string
@@ -4470,13 +4472,18 @@ func TestResponsesStreamObject_RequiresTerminalEventBeforeFinish(t *testing.T) {
 			wantFinish: true,
 		},
 		{
-			name:   "eof before terminal event returns retryable error",
+			name:   "eof before terminal event returns EOF error",
 			chunks: objectChunks,
 		},
 		{
 			name:      "failed event returns provider error",
 			chunks:    []string{failedEvent},
 			wantError: "boom",
+		},
+		{
+			name:      "error event keeps existing error path",
+			chunks:    []string{errorEvent},
+			wantError: "stream down",
 		},
 	}
 
