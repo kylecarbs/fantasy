@@ -47,6 +47,15 @@ func PrepareCallFunc(_ fantasy.LanguageModel, params *openaisdk.ChatCompletionNe
 	if providerOptions.User != nil {
 		params.User = param.NewOpt(*providerOptions.User)
 	}
+	if providerOptions.ParallelToolCalls != nil {
+		params.ParallelToolCalls = param.NewOpt(*providerOptions.ParallelToolCalls)
+	}
+	if providerOptions.MaxCompletionTokens != nil {
+		params.MaxCompletionTokens = param.NewOpt(*providerOptions.MaxCompletionTokens)
+	}
+	if providerOptions.PromptCacheKey != nil {
+		params.PromptCacheKey = param.NewOpt(*providerOptions.PromptCacheKey)
+	}
 	return nil, nil
 }
 
