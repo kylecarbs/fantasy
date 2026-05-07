@@ -1508,7 +1508,7 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 		}
 
 		err := stream.Err()
-		if err != nil {
+		if err != nil && !errors.Is(err, io.EOF) {
 			yield(fantasy.StreamPart{
 				Type:  fantasy.StreamPartTypeError,
 				Error: toProviderErr(err),
@@ -1892,7 +1892,7 @@ func (o responsesLanguageModel) streamObjectWithJSONMode(ctx context.Context, ca
 		}
 
 		err := stream.Err()
-		if err != nil {
+		if err != nil && !errors.Is(err, io.EOF) {
 			yield(fantasy.ObjectStreamPart{
 				Type:  fantasy.ObjectStreamPartTypeError,
 				Error: toProviderErr(err),

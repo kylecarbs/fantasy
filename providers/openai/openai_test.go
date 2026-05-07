@@ -4456,11 +4456,13 @@ func TestResponsesStreamObject_RequiresTerminalEventBeforeFinish(t *testing.T) {
 		responsesSSEEvent("response.output_text.delta", `{"type":"response.output_text.delta","output_index":0,"content_index":0,"item_id":"msg_01","delta":"{\"name\":\"Alice\"}"}`),
 	}
 	completedEvent := responsesSSEEvent("response.completed", `{"type":"response.completed","response":{"id":"resp_01","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`)
+	failedEvent := responsesSSEEvent("response.failed", `{"type":"response.failed","response":{"id":"resp_02","status":"failed","error":{"code":"server_error","message":"boom"},"output":[]}}`)
 
 	tests := []struct {
 		name       string
 		chunks     []string
 		wantFinish bool
+		wantError  string
 	}{
 		{
 			name:       "completed stream finishes",
@@ -4470,6 +4472,11 @@ func TestResponsesStreamObject_RequiresTerminalEventBeforeFinish(t *testing.T) {
 		{
 			name:   "eof before terminal event returns retryable error",
 			chunks: objectChunks,
+		},
+		{
+			name:      "failed event returns provider error",
+			chunks:    []string{failedEvent},
+			wantError: "boom",
 		},
 	}
 
@@ -4517,6 +4524,11 @@ func TestResponsesStreamObject_RequiresTerminalEventBeforeFinish(t *testing.T) {
 
 			require.Empty(t, finishes)
 			require.Len(t, errors, 1)
+			if tt.wantError != "" {
+				require.NotContains(t, errors[0].Error.Error(), "terminal event")
+				require.Contains(t, errors[0].Error.Error(), tt.wantError)
+				return
+			}
 			require.ErrorIs(t, errors[0].Error, io.EOF)
 			require.Contains(t, errors[0].Error.Error(), "terminal event")
 		})
