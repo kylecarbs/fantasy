@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -504,6 +505,97 @@ func TestStream_SendsOutputConfigEffort(t *testing.T) {
 	requireAnthropicEffort(t, call.body, EffortHigh)
 }
 
+func TestStream_RequiresMessageStopBeforeFinish(t *testing.T) {
+	t.Parallel()
+
+	completeTextStream := []string{
+		anthropicSSEEvent("message_start", `{"type":"message_start","message":{"id":"msg_complete","type":"message","role":"assistant","model":"claude-sonnet-4-20250514","content":[],"stop_reason":null,"usage":{"input_tokens":1,"output_tokens":0}}}`),
+		anthropicSSEEvent("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`),
+		anthropicSSEEvent("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}`),
+		anthropicSSEEvent("content_block_stop", `{"type":"content_block_stop","index":0}`),
+		anthropicSSEEvent("message_delta", `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":1,"output_tokens":1}}`),
+		anthropicSSEEvent("message_stop", `{"type":"message_stop"}`),
+	}
+	truncatedTextStream := completeTextStream[:len(completeTextStream)-1]
+
+	tests := []struct {
+		name       string
+		chunks     []string
+		wantFinish bool
+		wantEOF    bool
+		wantError  string
+	}{
+		{
+			name:       "complete stream finishes",
+			chunks:     completeTextStream,
+			wantFinish: true,
+		},
+		{
+			name:    "eof before message_stop returns EOF error",
+			chunks:  truncatedTextStream,
+			wantEOF: true,
+		},
+		{
+			name:    "empty stream returns EOF error",
+			wantEOF: true,
+		},
+		{
+			name: "error event keeps existing error path",
+			chunks: []string{
+				anthropicSSEEvent("error", `{"type":"error","error":{"type":"overloaded_error","message":"stream down"}}`),
+			},
+			wantError: "stream down",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			server, calls := newAnthropicStreamingServer(tt.chunks)
+			defer server.Close()
+
+			provider, err := New(
+				WithAPIKey("test-api-key"),
+				WithBaseURL(server.URL),
+			)
+			require.NoError(t, err)
+
+			model, err := provider.LanguageModel(context.Background(), "claude-sonnet-4-20250514")
+			require.NoError(t, err)
+
+			stream, err := model.Stream(context.Background(), fantasy.Call{
+				Prompt: testPrompt(),
+			})
+			require.NoError(t, err)
+
+			parts := collectAnthropicStreamParts(stream)
+			_ = awaitAnthropicCall(t, calls)
+
+			finishParts := streamPartsByType(parts, fantasy.StreamPartTypeFinish)
+			errorParts := streamPartsByType(parts, fantasy.StreamPartTypeError)
+
+			if tt.wantFinish {
+				require.Len(t, finishParts, 1)
+				require.Empty(t, errorParts)
+				require.Equal(t, fantasy.FinishReasonStop, finishParts[0].FinishReason)
+				return
+			}
+
+			require.Empty(t, finishParts)
+			require.Len(t, errorParts, 1)
+			require.Error(t, errorParts[0].Error)
+			if tt.wantEOF {
+				require.ErrorIs(t, errorParts[0].Error, io.EOF)
+				require.Contains(t, errorParts[0].Error.Error(), "message_stop")
+			} else {
+				require.NotContains(t, errorParts[0].Error.Error(), "message_stop")
+				require.Contains(t, errorParts[0].Error.Error(), tt.wantError)
+			}
+		})
+	}
+}
+
 type anthropicCall struct {
 	method string
 	path   string
@@ -561,6 +653,29 @@ func newAnthropicStreamingServer(chunks []string) (*httptest.Server, <-chan anth
 	}))
 
 	return server, calls
+}
+
+func anthropicSSEEvent(event, data string) string {
+	return fmt.Sprintf("event: %s\ndata: %s\n\n", event, data)
+}
+
+func collectAnthropicStreamParts(stream fantasy.StreamResponse) []fantasy.StreamPart {
+	var parts []fantasy.StreamPart
+	stream(func(part fantasy.StreamPart) bool {
+		parts = append(parts, part)
+		return true
+	})
+	return parts
+}
+
+func streamPartsByType(parts []fantasy.StreamPart, typ fantasy.StreamPartType) []fantasy.StreamPart {
+	var matches []fantasy.StreamPart
+	for _, part := range parts {
+		if part.Type == typ {
+			matches = append(matches, part)
+		}
+	}
+	return matches
 }
 
 func awaitAnthropicCall(t *testing.T, calls <-chan anthropicCall) anthropicCall {
@@ -1574,7 +1689,8 @@ func TestComputerUseToolJSON(t *testing.T) {
 		}
 		_, err := computerUseToolJSON(pdt)
 		require.Error(t, err)
-			require.Contains(t, err.Error(), "tool_version arg is missing")	})
+		require.Contains(t, err.Error(), "tool_version arg is missing")
+	})
 
 	t.Run("returns error for unsupported version", func(t *testing.T) {
 		t.Parallel()

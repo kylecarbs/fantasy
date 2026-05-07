@@ -1244,6 +1244,7 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 
 	stream := a.client.Messages.NewStreaming(ctx, *params, reqOpts...)
 	acc := anthropic.Message{}
+	var sawMessageStop bool
 	return func(yield func(fantasy.StreamPart) bool) {
 		if len(warnings) > 0 {
 			if !yield(fantasy.StreamPart{
@@ -1448,11 +1449,22 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 					}
 				}
 			case "message_stop":
+				sawMessageStop = true
 			}
 		}
 
 		err := stream.Err()
 		if err == nil || errors.Is(err, io.EOF) {
+			if !sawMessageStop {
+				if err == nil {
+					err = io.EOF
+				}
+				yield(fantasy.StreamPart{
+					Type:  fantasy.StreamPartTypeError,
+					Error: fmt.Errorf("anthropic stream closed before message_stop: %w", err),
+				})
+				return
+			}
 			yield(fantasy.StreamPart{
 				Type:         fantasy.StreamPartTypeFinish,
 				ID:           acc.ID,
