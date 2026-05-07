@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -3643,6 +3644,21 @@ func newResponsesProvider(t *testing.T, serverURL string) fantasy.LanguageModel 
 	return model
 }
 
+func responsesSSEEvent(event, data string) string {
+	return "event: " + event + "\ndata: " + data + "\n\n"
+}
+
+func collectObjectStreamParts(stream fantasy.ObjectStreamResponse) []fantasy.ObjectStreamPart {
+	var parts []fantasy.ObjectStreamPart
+	for part := range stream {
+		parts = append(parts, part)
+		if part.Type == fantasy.ObjectStreamPartTypeError || part.Type == fantasy.ObjectStreamPartTypeFinish {
+			break
+		}
+	}
+	return parts
+}
+
 func TestResponsesGenerate_WebSearchResponse(t *testing.T) {
 	t.Parallel()
 
@@ -4333,6 +4349,180 @@ func TestResponsesToPrompt_ReasoningWithFunctionCallCombined(t *testing.T) {
 	require.Equal(t, functionCallID, input[3].OfFunctionCallOutput.CallID)
 }
 
+func TestResponsesStream_RequiresTerminalEventBeforeFinish(t *testing.T) {
+	t.Parallel()
+
+	textChunks := []string{
+		responsesSSEEvent("response.output_item.added", `{"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_01","role":"assistant","status":"in_progress","content":[]}}`),
+		responsesSSEEvent("response.output_text.delta", `{"type":"response.output_text.delta","output_index":0,"content_index":0,"item_id":"msg_01","delta":"hello"}`),
+		responsesSSEEvent("response.output_item.done", `{"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":"msg_01","role":"assistant","status":"completed","content":[{"type":"output_text","text":"hello","annotations":[]}]}}`),
+	}
+	completedEvent := responsesSSEEvent("response.completed", `{"type":"response.completed","response":{"id":"resp_01","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`)
+	incompleteEvent := responsesSSEEvent("response.incomplete", `{"type":"response.incomplete","response":{"id":"resp_02","status":"incomplete","output":[],"incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`)
+	failedEvent := responsesSSEEvent("response.failed", `{"type":"response.failed","response":{"id":"resp_03","status":"failed","error":{"code":"server_error","message":"boom"},"output":[]}}`)
+
+	tests := []struct {
+		name             string
+		chunks           []string
+		wantFinishReason fantasy.FinishReason
+		wantEOF          bool
+		wantError        string
+	}{
+		{
+			name:             "completed stream finishes",
+			chunks:           append(append([]string{}, textChunks...), completedEvent),
+			wantFinishReason: fantasy.FinishReasonStop,
+		},
+		{
+			name:             "incomplete stream is terminal",
+			chunks:           append(append([]string{}, textChunks...), incompleteEvent),
+			wantFinishReason: fantasy.FinishReasonLength,
+		},
+		{
+			name:    "eof before terminal event returns retryable error",
+			chunks:  textChunks,
+			wantEOF: true,
+		},
+		{
+			name:    "empty stream returns retryable error",
+			wantEOF: true,
+		},
+		{
+			name:      "failed event returns provider error",
+			chunks:    []string{failedEvent},
+			wantError: "boom",
+		},
+		{
+			name:      "malformed stream keeps existing error path",
+			chunks:    []string{responsesSSEEvent("response.output_text.delta", `{not-json}`)},
+			wantError: "invalid",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			sms := newStreamingMockServer()
+			defer sms.close()
+			sms.chunks = tt.chunks
+
+			model := newResponsesProvider(t, sms.server.URL)
+
+			stream, err := model.Stream(context.Background(), fantasy.Call{
+				Prompt: testPrompt,
+			})
+			require.NoError(t, err)
+
+			parts, err := collectStreamParts(stream)
+			require.NoError(t, err)
+
+			var finishes []fantasy.StreamPart
+			var errors []fantasy.StreamPart
+			for _, part := range parts {
+				switch part.Type {
+				case fantasy.StreamPartTypeFinish:
+					finishes = append(finishes, part)
+				case fantasy.StreamPartTypeError:
+					errors = append(errors, part)
+				}
+			}
+
+			if tt.wantFinishReason != "" {
+				require.Len(t, finishes, 1)
+				require.Empty(t, errors)
+				require.Equal(t, tt.wantFinishReason, finishes[0].FinishReason)
+				return
+			}
+
+			require.Empty(t, finishes)
+			require.Len(t, errors, 1)
+			require.Error(t, errors[0].Error)
+			if tt.wantEOF {
+				require.ErrorIs(t, errors[0].Error, io.EOF)
+				require.Contains(t, errors[0].Error.Error(), "terminal event")
+			} else {
+				require.NotContains(t, errors[0].Error.Error(), "terminal event")
+				require.Contains(t, errors[0].Error.Error(), tt.wantError)
+			}
+		})
+	}
+}
+
+func TestResponsesStreamObject_RequiresTerminalEventBeforeFinish(t *testing.T) {
+	t.Parallel()
+
+	objectChunks := []string{
+		responsesSSEEvent("response.output_text.delta", `{"type":"response.output_text.delta","output_index":0,"content_index":0,"item_id":"msg_01","delta":"{\"name\":\"Alice\"}"}`),
+	}
+	completedEvent := responsesSSEEvent("response.completed", `{"type":"response.completed","response":{"id":"resp_01","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`)
+
+	tests := []struct {
+		name       string
+		chunks     []string
+		wantFinish bool
+	}{
+		{
+			name:       "completed stream finishes",
+			chunks:     append(append([]string{}, objectChunks...), completedEvent),
+			wantFinish: true,
+		},
+		{
+			name:   "eof before terminal event returns retryable error",
+			chunks: objectChunks,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			sms := newStreamingMockServer()
+			defer sms.close()
+			sms.chunks = tt.chunks
+
+			model := newResponsesProvider(t, sms.server.URL)
+			stream, err := model.StreamObject(context.Background(), fantasy.ObjectCall{
+				Prompt: fantasy.Prompt{fantasy.NewUserMessage("Generate a person.")},
+				Schema: fantasy.Schema{
+					Type: "object",
+					Properties: map[string]*fantasy.Schema{
+						"name": {Type: "string"},
+					},
+					Required: []string{"name"},
+				},
+				SchemaName: "Person",
+			})
+			require.NoError(t, err)
+
+			parts := collectObjectStreamParts(stream)
+
+			var finishes []fantasy.ObjectStreamPart
+			var errors []fantasy.ObjectStreamPart
+			for _, part := range parts {
+				switch part.Type {
+				case fantasy.ObjectStreamPartTypeFinish:
+					finishes = append(finishes, part)
+				case fantasy.ObjectStreamPartTypeError:
+					errors = append(errors, part)
+				}
+			}
+
+			if tt.wantFinish {
+				require.Len(t, finishes, 1)
+				require.Empty(t, errors)
+				require.Equal(t, fantasy.FinishReasonStop, finishes[0].FinishReason)
+				return
+			}
+
+			require.Empty(t, finishes)
+			require.Len(t, errors, 1)
+			require.ErrorIs(t, errors[0].Error, io.EOF)
+			require.Contains(t, errors[0].Error.Error(), "terminal event")
+		})
+	}
+}
+
 func TestResponsesStream_WebSearchResponse(t *testing.T) {
 	t.Parallel()
 
@@ -4696,7 +4886,8 @@ func TestComputerUseGenerateRoundTrip_NonImageResult(t *testing.T) {
 		},
 	}
 
-	input, warnings := toResponsesPrompt(prompt, "system", false)
+	input, warnings, err := toResponsesPrompt(prompt, "system", false)
+	require.NoError(t, err)
 
 	// Should warn about non-image result.
 	var foundWarning bool

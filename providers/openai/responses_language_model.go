@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"slices"
 	"strings"
@@ -1130,6 +1131,26 @@ func mapResponsesFinishReason(reason string, hasFunctionCall bool) fantasy.Finis
 	}
 }
 
+func responsesStreamClosedBeforeTerminalEventError(err error) error {
+	if err == nil {
+		err = io.EOF
+	}
+	return fmt.Errorf("openai responses stream closed before terminal event: %w", err)
+}
+
+func responsesFailedStreamError(response responses.Response) error {
+	if response.Error.Message == "" && response.Error.Code == "" {
+		return fmt.Errorf("response failed")
+	}
+	if response.Error.Code == "" {
+		return fmt.Errorf("response failed: %s", response.Error.Message)
+	}
+	if response.Error.Message == "" {
+		return fmt.Errorf("response failed (code: %s)", response.Error.Code)
+	}
+	return fmt.Errorf("response failed: %s (code: %s)", response.Error.Message, response.Error.Code)
+}
+
 func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.StreamResponse, error) {
 	params, warnings, err := o.prepareParams(call)
 	if err != nil {
@@ -1148,6 +1169,7 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 	responseID := ""
 	ongoingToolCalls := make(map[int64]*ongoingToolCall)
 	hasFunctionCall := false
+	sawTerminalEvent := false
 	activeReasoning := make(map[string]*reasoningState)
 
 	return func(yield func(fantasy.StreamPart) bool) {
@@ -1449,16 +1471,29 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 				}
 
 			case "response.completed":
+				sawTerminalEvent = true
 				completed := event.AsResponseCompleted()
 				responseID = completed.Response.ID
 				finishReason = mapResponsesFinishReason(completed.Response.IncompleteDetails.Reason, hasFunctionCall)
 				usage = responsesUsage(completed.Response)
 
 			case "response.incomplete":
+				sawTerminalEvent = true
 				incomplete := event.AsResponseIncomplete()
 				responseID = incomplete.Response.ID
 				finishReason = mapResponsesFinishReason(incomplete.Response.IncompleteDetails.Reason, hasFunctionCall)
 				usage = responsesUsage(incomplete.Response)
+
+			case "response.failed":
+				failed := event.AsResponseFailed()
+				responseID = failed.Response.ID
+				if !yield(fantasy.StreamPart{
+					Type:  fantasy.StreamPartTypeError,
+					Error: responsesFailedStreamError(failed.Response),
+				}) {
+					return
+				}
+				return
 
 			case "error":
 				errorEvent := event.AsError()
@@ -1477,6 +1512,13 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 			yield(fantasy.StreamPart{
 				Type:  fantasy.StreamPartTypeError,
 				Error: toProviderErr(err),
+			})
+			return
+		}
+		if !sawTerminalEvent {
+			yield(fantasy.StreamPart{
+				Type:  fantasy.StreamPartTypeError,
+				Error: responsesStreamClosedBeforeTerminalEventError(err),
 			})
 			return
 		}
@@ -1757,6 +1799,7 @@ func (o responsesLanguageModel) streamObjectWithJSONMode(ctx context.Context, ca
 		var responseID string
 		var streamErr error
 		hasFunctionCall := false
+		sawTerminalEvent := false
 
 		for stream.Next() {
 			event := stream.Current()
@@ -1810,16 +1853,30 @@ func (o responsesLanguageModel) streamObjectWithJSONMode(ctx context.Context, ca
 				}
 
 			case "response.completed":
+				sawTerminalEvent = true
 				completed := event.AsResponseCompleted()
 				responseID = completed.Response.ID
 				finishReason = mapResponsesFinishReason(completed.Response.IncompleteDetails.Reason, hasFunctionCall)
 				usage = responsesUsage(completed.Response)
 
 			case "response.incomplete":
+				sawTerminalEvent = true
 				incomplete := event.AsResponseIncomplete()
 				responseID = incomplete.Response.ID
 				finishReason = mapResponsesFinishReason(incomplete.Response.IncompleteDetails.Reason, hasFunctionCall)
 				usage = responsesUsage(incomplete.Response)
+
+			case "response.failed":
+				failed := event.AsResponseFailed()
+				responseID = failed.Response.ID
+				streamErr = responsesFailedStreamError(failed.Response)
+				if !yield(fantasy.ObjectStreamPart{
+					Type:  fantasy.ObjectStreamPartTypeError,
+					Error: streamErr,
+				}) {
+					return
+				}
+				return
 
 			case "error":
 				errorEvent := event.AsError()
@@ -1839,6 +1896,13 @@ func (o responsesLanguageModel) streamObjectWithJSONMode(ctx context.Context, ca
 			yield(fantasy.ObjectStreamPart{
 				Type:  fantasy.ObjectStreamPartTypeError,
 				Error: toProviderErr(err),
+			})
+			return
+		}
+		if !sawTerminalEvent {
+			yield(fantasy.ObjectStreamPart{
+				Type:  fantasy.ObjectStreamPartTypeError,
+				Error: responsesStreamClosedBeforeTerminalEventError(err),
 			})
 			return
 		}
