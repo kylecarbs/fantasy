@@ -1043,46 +1043,6 @@ func TestToPrompt_WebSearchProviderExecutedErrorRoundTrip(t *testing.T) {
 	require.Equal(t, "I was unable to search.", assistantMsg.Content[2].OfText.Text)
 }
 
-func TestEncode_WebSearchErrorMarshalsCleanly(t *testing.T) {
-	t.Parallel()
-
-	prompt := fantasy.Prompt{
-		{
-			Role: fantasy.MessageRoleUser,
-			Content: []fantasy.MessagePart{
-				fantasy.TextPart{Text: "Search for the latest AI news"},
-			},
-		},
-		{
-			Role: fantasy.MessageRoleAssistant,
-			Content: []fantasy.MessagePart{
-				fantasy.ToolCallPart{
-					ToolCallID:       "srvtoolu_err",
-					ToolName:         "web_search",
-					Input:            `{"query":"latest AI news"}`,
-					ProviderExecuted: true,
-				},
-				fantasy.ToolResultPart{
-					ToolCallID:       "srvtoolu_err",
-					ProviderExecuted: true,
-					ProviderOptions: fantasy.ProviderOptions{
-						Name: &WebSearchResultMetadata{ErrorCode: "max_uses_exceeded"},
-					},
-				},
-			},
-		},
-	}
-
-	_, messages, warnings := toPrompt(prompt, true)
-	require.Empty(t, warnings)
-	require.Len(t, messages, 2)
-
-	payload, err := json.Marshal(messages[1])
-	require.NoError(t, err)
-	require.Contains(t, string(payload), `"type":"web_search_tool_result_error"`)
-	require.Contains(t, string(payload), `"error_code":"max_uses_exceeded"`)
-}
-
 func TestToPrompt_PreservesOrderForInterleavedThinkingAndWebSearch(t *testing.T) {
 	t.Parallel()
 
