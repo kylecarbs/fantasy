@@ -702,6 +702,17 @@ func requireReasoningMetadata(t *testing.T, metadata fantasy.ProviderMetadata) *
 	return reasoning
 }
 
+func requireWebSearchResultMetadata(t *testing.T, metadata fantasy.ProviderMetadata) *WebSearchResultMetadata {
+	t.Helper()
+
+	providerOption, ok := fantasy.ProviderOptions(metadata)[Name]
+	require.True(t, ok, "provider metadata should contain anthropic key")
+	result, ok := providerOption.(*WebSearchResultMetadata)
+	require.True(t, ok, "provider metadata should be *WebSearchResultMetadata")
+	require.NotNil(t, result)
+	return result
+}
+
 func streamPartsByType(parts []fantasy.StreamPart, typ fantasy.StreamPartType) []fantasy.StreamPart {
 	var matches []fantasy.StreamPart
 	for _, part := range parts {
@@ -840,6 +851,48 @@ func mockAnthropicWebSearchResponse() map[string]any {
 	}
 }
 
+func mockAnthropicWebSearchErrorResponse() map[string]any {
+	return map[string]any{
+		"id":    "msg_01WebSearchError",
+		"type":  "message",
+		"role":  "assistant",
+		"model": "claude-sonnet-4-20250514",
+		"content": []any{
+			map[string]any{
+				"type":   "server_tool_use",
+				"id":     "srvtoolu_err",
+				"name":   "web_search",
+				"input":  map[string]any{"query": "latest AI news"},
+				"caller": map[string]any{"type": "direct"},
+			},
+			map[string]any{
+				"type":        "web_search_tool_result",
+				"tool_use_id": "srvtoolu_err",
+				"caller":      map[string]any{"type": "direct"},
+				"content": map[string]any{
+					"type":       "web_search_tool_result_error",
+					"error_code": "max_uses_exceeded",
+				},
+			},
+			map[string]any{
+				"type": "text",
+				"text": "I was unable to search.",
+			},
+		},
+		"stop_reason":   "end_turn",
+		"stop_sequence": nil,
+		"usage": map[string]any{
+			"input_tokens":                100,
+			"output_tokens":               20,
+			"cache_creation_input_tokens": 0,
+			"cache_read_input_tokens":     0,
+			"server_tool_use": map[string]any{
+				"web_search_requests": 1,
+			},
+		},
+	}
+}
+
 func TestToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 	t.Parallel()
 
@@ -933,6 +986,101 @@ func TestToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 	// Third content block: plain text.
 	require.NotNil(t, assistantMsg.Content[2].OfText)
 	require.Equal(t, "Here is what I found.", assistantMsg.Content[2].OfText.Text)
+}
+
+func TestToPrompt_WebSearchProviderExecutedErrorRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	prompt := fantasy.Prompt{
+		{
+			Role: fantasy.MessageRoleUser,
+			Content: []fantasy.MessagePart{
+				fantasy.TextPart{Text: "Search for the latest AI news"},
+			},
+		},
+		{
+			Role: fantasy.MessageRoleAssistant,
+			Content: []fantasy.MessagePart{
+				fantasy.ToolCallPart{
+					ToolCallID:       "srvtoolu_err",
+					ToolName:         "web_search",
+					Input:            `{"query":"latest AI news"}`,
+					ProviderExecuted: true,
+				},
+				fantasy.ToolResultPart{
+					ToolCallID:       "srvtoolu_err",
+					ProviderExecuted: true,
+					ProviderOptions: fantasy.ProviderOptions{
+						Name: &WebSearchResultMetadata{ErrorCode: "max_uses_exceeded"},
+					},
+				},
+				fantasy.TextPart{Text: "I was unable to search."},
+			},
+		},
+	}
+
+	_, messages, warnings := toPrompt(prompt, true)
+	require.Empty(t, warnings)
+	require.Len(t, messages, 2)
+
+	assistantMsg := messages[1]
+	require.Len(t, assistantMsg.Content, 3)
+	require.NotNil(t, assistantMsg.Content[0].OfServerToolUse)
+	require.Equal(t, "srvtoolu_err", assistantMsg.Content[0].OfServerToolUse.ID)
+
+	webResult := assistantMsg.Content[1]
+	require.NotNil(t, webResult.OfWebSearchToolResult)
+	require.Equal(t, "srvtoolu_err", webResult.OfWebSearchToolResult.ToolUseID)
+	require.Nil(t, webResult.OfWebSearchToolResult.Content.OfWebSearchToolResultBlockItem)
+	require.NotNil(t, webResult.OfWebSearchToolResult.Content.OfRequestWebSearchToolResultError)
+	require.Equal(
+		t,
+		anthropic.WebSearchToolResultErrorCodeMaxUsesExceeded,
+		webResult.OfWebSearchToolResult.Content.OfRequestWebSearchToolResultError.ErrorCode,
+	)
+
+	require.NotNil(t, assistantMsg.Content[2].OfText)
+	require.Equal(t, "I was unable to search.", assistantMsg.Content[2].OfText.Text)
+}
+
+func TestEncode_WebSearchErrorMarshalsCleanly(t *testing.T) {
+	t.Parallel()
+
+	prompt := fantasy.Prompt{
+		{
+			Role: fantasy.MessageRoleUser,
+			Content: []fantasy.MessagePart{
+				fantasy.TextPart{Text: "Search for the latest AI news"},
+			},
+		},
+		{
+			Role: fantasy.MessageRoleAssistant,
+			Content: []fantasy.MessagePart{
+				fantasy.ToolCallPart{
+					ToolCallID:       "srvtoolu_err",
+					ToolName:         "web_search",
+					Input:            `{"query":"latest AI news"}`,
+					ProviderExecuted: true,
+				},
+				fantasy.ToolResultPart{
+					ToolCallID:       "srvtoolu_err",
+					ProviderExecuted: true,
+					ProviderOptions: fantasy.ProviderOptions{
+						Name: &WebSearchResultMetadata{ErrorCode: "max_uses_exceeded"},
+					},
+				},
+			},
+		},
+	}
+
+	_, messages, warnings := toPrompt(prompt, true)
+	require.Empty(t, warnings)
+	require.Len(t, messages, 2)
+
+	payload, err := json.Marshal(messages[1])
+	require.NoError(t, err)
+	require.Contains(t, string(payload), `"type":"web_search_tool_result_error"`)
+	require.Contains(t, string(payload), `"error_code":"max_uses_exceeded"`)
 }
 
 func TestToPrompt_PreservesOrderForInterleavedThinkingAndWebSearch(t *testing.T) {
@@ -1123,13 +1271,6 @@ func TestToPrompt_WebSearchProviderExecutedWithoutMetadata(t *testing.T) {
 			},
 			wantPrefix: anthropicWebSearchMetadataTypeMismatchPrefix,
 		},
-		{
-			name: "empty metadata",
-			options: fantasy.ProviderOptions{
-				Name: &WebSearchResultMetadata{},
-			},
-			wantPrefix: anthropicWebSearchMetadataMissingPrefix,
-		},
 	}
 
 	for _, tt := range tests {
@@ -1163,13 +1304,17 @@ func TestToPrompt_WebSearchProviderExecutedWithoutMetadata(t *testing.T) {
 			}
 
 			_, messages, warnings := toPrompt(prompt, true)
-			require.Len(t, warnings, 2)
+			require.Len(t, warnings, 1)
 			require.True(t, strings.HasPrefix(warnings[0].Message, tt.wantPrefix), warnings[0].Message)
-			require.True(t, strings.HasPrefix(warnings[1].Message, anthropicWebSearchToolCallDroppedPrefix), warnings[1].Message)
 			require.Len(t, messages, 2)
-			require.Len(t, messages[1].Content, 1)
-			require.NotNil(t, messages[1].Content[0].OfText)
-			require.Equal(t, "fallback answer", messages[1].Content[0].OfText.Text)
+			require.Len(t, messages[1].Content, 3)
+			require.NotNil(t, messages[1].Content[0].OfServerToolUse)
+			require.NotNil(t, messages[1].Content[1].OfWebSearchToolResult)
+			require.Equal(t, "srvtoolu_missing", messages[1].Content[1].OfWebSearchToolResult.ToolUseID)
+			require.Len(t, messages[1].Content[1].OfWebSearchToolResult.Content.OfWebSearchToolResultBlockItem, 0)
+			require.Nil(t, messages[1].Content[1].OfWebSearchToolResult.Content.OfRequestWebSearchToolResultError)
+			require.NotNil(t, messages[1].Content[2].OfText)
+			require.Equal(t, "fallback answer", messages[1].Content[2].OfText.Text)
 		})
 	}
 }
@@ -1256,6 +1401,66 @@ func TestGenerate_WebSearchResponse(t *testing.T) {
 		"Based on recent search results, here is the latest AI news.",
 		texts[0].Text,
 	)
+}
+
+func TestGenerate_WebSearchErrorPreservesErrorCode(t *testing.T) {
+	t.Parallel()
+
+	server, calls := newAnthropicJSONServer(mockAnthropicWebSearchErrorResponse())
+	defer server.Close()
+
+	provider, err := New(
+		WithAPIKey("test-api-key"),
+		WithBaseURL(server.URL),
+	)
+	require.NoError(t, err)
+
+	model, err := provider.LanguageModel(context.Background(), "claude-sonnet-4-20250514")
+	require.NoError(t, err)
+
+	resp, err := model.Generate(context.Background(), fantasy.Call{
+		Prompt: testPrompt(),
+		Tools: []fantasy.Tool{
+			WebSearchTool(nil),
+		},
+	})
+	require.NoError(t, err)
+
+	call := awaitAnthropicCall(t, calls)
+	require.Equal(t, "POST", call.method)
+	require.Equal(t, "/v1/messages", call.path)
+
+	var (
+		toolCalls   []fantasy.ToolCallContent
+		sources     []fantasy.SourceContent
+		toolResults []fantasy.ToolResultContent
+		texts       []fantasy.TextContent
+	)
+	for _, c := range resp.Content {
+		switch v := c.(type) {
+		case fantasy.ToolCallContent:
+			toolCalls = append(toolCalls, v)
+		case fantasy.SourceContent:
+			sources = append(sources, v)
+		case fantasy.ToolResultContent:
+			toolResults = append(toolResults, v)
+		case fantasy.TextContent:
+			texts = append(texts, v)
+		}
+	}
+
+	require.Len(t, toolCalls, 1)
+	require.True(t, toolCalls[0].ProviderExecuted)
+	require.Equal(t, "srvtoolu_err", toolCalls[0].ToolCallID)
+	require.Empty(t, sources)
+	require.Len(t, toolResults, 1)
+	require.True(t, toolResults[0].ProviderExecuted)
+	require.Equal(t, "srvtoolu_err", toolResults[0].ToolCallID)
+	webMeta := requireWebSearchResultMetadata(t, toolResults[0].ProviderMetadata)
+	require.Equal(t, "max_uses_exceeded", webMeta.ErrorCode)
+	require.Empty(t, webMeta.Results)
+	require.Len(t, texts, 1)
+	require.Equal(t, "I was unable to search.", texts[0].Text)
 }
 
 func TestGenerate_WebSearchToolInRequest(t *testing.T) {
@@ -1727,6 +1932,38 @@ func TestStream_WebSearchResponse(t *testing.T) {
 	// Text block emits a text delta.
 	require.NotEmpty(t, textDeltas, "should have text deltas")
 	require.Equal(t, "Here are the results.", textDeltas[0].Delta)
+}
+
+func TestStream_WebSearchErrorPreservesErrorCode(t *testing.T) {
+	t.Parallel()
+
+	chunks := []string{
+		"event: message_start\n",
+		`data: {"type":"message_start","message":{"id":"msg_01WebSearchError","type":"message","role":"assistant","model":"claude-sonnet-4-20250514","content":[],"stop_reason":null,"usage":{"input_tokens":100,"output_tokens":0}}}` + "\n\n",
+		"event: content_block_start\n",
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_err","name":"web_search","input":{}}}` + "\n\n",
+		"event: content_block_stop\n",
+		`data: {"type":"content_block_stop","index":0}` + "\n\n",
+		"event: content_block_start\n",
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_err","content":{"type":"web_search_tool_result_error","error_code":"max_uses_exceeded"}}}` + "\n\n",
+		"event: content_block_stop\n",
+		`data: {"type":"content_block_stop","index":1}` + "\n\n",
+		"event: message_stop\n",
+		`data: {"type":"message_stop"}` + "\n\n",
+	}
+
+	parts := streamAnthropicParts(t, chunks, WebSearchTool(nil))
+
+	toolResults := streamPartsByType(parts, fantasy.StreamPartTypeToolResult)
+	sourceParts := streamPartsByType(parts, fantasy.StreamPartTypeSource)
+	require.Len(t, toolResults, 1)
+	require.Empty(t, sourceParts)
+	require.True(t, toolResults[0].ProviderExecuted)
+	require.Equal(t, "srvtoolu_err", toolResults[0].ID)
+	require.Equal(t, "web_search", toolResults[0].ToolCallName)
+	webMeta := requireWebSearchResultMetadata(t, toolResults[0].ProviderMetadata)
+	require.Equal(t, "max_uses_exceeded", webMeta.ErrorCode)
+	require.Empty(t, webMeta.Results)
 }
 
 func TestStream_RedactedThinkingEmitsStartAndEnd(t *testing.T) {

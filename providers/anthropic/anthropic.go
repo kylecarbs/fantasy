@@ -71,7 +71,6 @@ const (
 	anthropicReasoningMetadataEmptyPrefix        = "[anthropic.reasoning_metadata_empty]"
 	anthropicWebSearchMetadataMissingPrefix      = "[anthropic.web_search_metadata_missing]"
 	anthropicWebSearchMetadataTypeMismatchPrefix = "[anthropic.web_search_metadata_type_mismatch]"
-	anthropicWebSearchToolCallDroppedPrefix      = "[anthropic.web_search_tool_call_dropped]"
 )
 
 type options struct {
@@ -453,41 +452,27 @@ func webSearchResultMetadataForEncode(options fantasy.ProviderOptions) (*WebSear
 	if !ok {
 		warning := metadataWarning(
 			anthropicWebSearchMetadataMissingPrefix,
-			"dropping provider-executed web_search_tool_result because Anthropic web search metadata is missing",
+			"encoding provider-executed web_search_tool_result with empty result fallback because Anthropic web search metadata is missing",
 		)
-		return nil, &warning
+		return &WebSearchResultMetadata{}, &warning
 	}
 	metadata, ok := providerOption.(*WebSearchResultMetadata)
 	if !ok {
 		warning := metadataWarning(
 			anthropicWebSearchMetadataTypeMismatchPrefix,
-			"dropping provider-executed web_search_tool_result because Anthropic web search metadata had unexpected type %T",
+			"encoding provider-executed web_search_tool_result with empty result fallback because Anthropic web search metadata had unexpected type %T",
 			providerOption,
 		)
-		return nil, &warning
+		return &WebSearchResultMetadata{}, &warning
 	}
-	if metadata == nil || len(metadata.Results) == 0 {
+	if metadata == nil {
 		warning := metadataWarning(
 			anthropicWebSearchMetadataMissingPrefix,
-			"dropping provider-executed web_search_tool_result because Anthropic web search metadata had no results",
+			"encoding provider-executed web_search_tool_result with empty result fallback because Anthropic web search metadata was nil",
 		)
-		return nil, &warning
+		return &WebSearchResultMetadata{}, &warning
 	}
 	return metadata, nil
-}
-
-func dropServerToolUseBlock(
-	content []anthropic.ContentBlockParamUnion,
-	toolCallID string,
-) ([]anthropic.ContentBlockParamUnion, bool) {
-	for i := len(content) - 1; i >= 0; i-- {
-		serverToolUse := content[i].OfServerToolUse
-		if serverToolUse == nil || serverToolUse.ID != toolCallID {
-			continue
-		}
-		return append(content[:i], content[i+1:]...), true
-	}
-	return content, false
 }
 
 func reasoningEndProviderMetadata(contentBlock anthropic.ContentBlockUnion) fantasy.ProviderMetadata {
@@ -1125,16 +1110,6 @@ func toPrompt(prompt fantasy.Prompt, sendReasoningData bool) ([]anthropic.TextBl
 							searchMeta, warning := webSearchResultMetadataForEncode(result.ProviderOptions)
 							if warning != nil {
 								warnings = append(warnings, *warning)
-								var dropped bool
-								anthropicContent, dropped = dropServerToolUseBlock(anthropicContent, result.ToolCallID)
-								if dropped {
-									warnings = append(warnings, metadataWarning(
-										anthropicWebSearchToolCallDroppedPrefix,
-										"dropping provider-executed web_search server_tool_use %q because its result metadata was unusable",
-										result.ToolCallID,
-									))
-								}
-								continue
 							}
 							anthropicContent = append(anthropicContent, buildWebSearchToolResultBlock(result.ToolCallID, searchMeta))
 							continue
@@ -1179,24 +1154,37 @@ func hasVisibleAssistantContent(content []anthropic.ContentBlockParamUnion) bool
 // buildWebSearchToolResultBlock constructs an Anthropic
 // web_search_tool_result content block from structured metadata.
 func buildWebSearchToolResultBlock(toolCallID string, searchMeta *WebSearchResultMetadata) anthropic.ContentBlockParamUnion {
-	resultBlocks := make([]anthropic.WebSearchResultBlockParam, 0, len(searchMeta.Results))
-	for _, r := range searchMeta.Results {
-		block := anthropic.WebSearchResultBlockParam{
-			URL:              r.URL,
-			Title:            r.Title,
-			EncryptedContent: r.EncryptedContent,
+	var content anthropic.WebSearchToolResultBlockParamContentUnion
+	switch {
+	case searchMeta != nil && len(searchMeta.Results) > 0:
+		resultBlocks := make([]anthropic.WebSearchResultBlockParam, 0, len(searchMeta.Results))
+		for _, r := range searchMeta.Results {
+			block := anthropic.WebSearchResultBlockParam{
+				URL:              r.URL,
+				Title:            r.Title,
+				EncryptedContent: r.EncryptedContent,
+			}
+			if r.PageAge != "" {
+				block.PageAge = param.NewOpt(r.PageAge)
+			}
+			resultBlocks = append(resultBlocks, block)
 		}
-		if r.PageAge != "" {
-			block.PageAge = param.NewOpt(r.PageAge)
+		content = anthropic.WebSearchToolResultBlockParamContentUnion{
+			OfWebSearchToolResultBlockItem: resultBlocks,
 		}
-		resultBlocks = append(resultBlocks, block)
+	case searchMeta != nil && searchMeta.ErrorCode != "":
+		content = anthropic.NewWebSearchToolRequestError(
+			anthropic.WebSearchToolResultErrorCode(searchMeta.ErrorCode),
+		)
+	default:
+		content = anthropic.WebSearchToolResultBlockParamContentUnion{
+			OfWebSearchToolResultBlockItem: []anthropic.WebSearchResultBlockParam{},
+		}
 	}
 	return anthropic.ContentBlockParamUnion{
 		OfWebSearchToolResult: &anthropic.WebSearchToolResultBlockParam{
 			ToolUseID: toolCallID,
-			Content: anthropic.WebSearchToolResultBlockParamContentUnion{
-				OfWebSearchToolResultBlockItem: resultBlocks,
-			},
+			Content:   content,
 		},
 	}
 }
@@ -1321,6 +1309,12 @@ func (a languageModel) Generate(ctx context.Context, call fantasy.Call) (*fantas
 				toolResult.ProviderMetadata = fantasy.ProviderMetadata{
 					Name: &WebSearchResultMetadata{
 						Results: metadataResults,
+					},
+				}
+			} else if webSearchResult.Content.ErrorCode != "" {
+				toolResult.ProviderMetadata = fantasy.ProviderMetadata{
+					Name: &WebSearchResultMetadata{
+						ErrorCode: string(webSearchResult.Content.ErrorCode),
 					},
 				}
 			}
@@ -1506,11 +1500,15 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 								PageAge:          item.PageAge,
 							})
 						}
-					}
-					if len(metadataResults) > 0 {
 						providerMeta = fantasy.ProviderMetadata{
 							Name: &WebSearchResultMetadata{
 								Results: metadataResults,
+							},
+						}
+					} else if contentBlock.Content.ErrorCode != "" {
+						providerMeta = fantasy.ProviderMetadata{
+							Name: &WebSearchResultMetadata{
+								ErrorCode: string(contentBlock.Content.ErrorCode),
 							},
 						}
 					}
