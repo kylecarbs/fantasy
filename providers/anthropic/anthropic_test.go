@@ -668,6 +668,40 @@ func collectAnthropicStreamParts(stream fantasy.StreamResponse) []fantasy.Stream
 	return parts
 }
 
+func streamAnthropicParts(t *testing.T, chunks []string, tools ...fantasy.Tool) []fantasy.StreamPart {
+	t.Helper()
+
+	server, calls := newAnthropicStreamingServer(chunks)
+	defer server.Close()
+
+	provider, err := New(
+		WithAPIKey("test-api-key"),
+		WithBaseURL(server.URL),
+	)
+	require.NoError(t, err)
+
+	model, err := provider.LanguageModel(context.Background(), "claude-sonnet-4-20250514")
+	require.NoError(t, err)
+
+	stream, err := model.Stream(context.Background(), fantasy.Call{
+		Prompt: testPrompt(),
+		Tools:  tools,
+	})
+	require.NoError(t, err)
+
+	parts := collectAnthropicStreamParts(stream)
+	_ = awaitAnthropicCall(t, calls)
+	return parts
+}
+
+func requireReasoningMetadata(t *testing.T, metadata fantasy.ProviderMetadata) *ReasoningOptionMetadata {
+	t.Helper()
+
+	reasoning := GetReasoningMetadata(fantasy.ProviderOptions(metadata))
+	require.NotNil(t, reasoning)
+	return reasoning
+}
+
 func streamPartsByType(parts []fantasy.StreamPart, typ fantasy.StreamPartType) []fantasy.StreamPart {
 	var matches []fantasy.StreamPart
 	for _, part := range parts {
@@ -899,6 +933,245 @@ func TestToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 	// Third content block: plain text.
 	require.NotNil(t, assistantMsg.Content[2].OfText)
 	require.Equal(t, "Here is what I found.", assistantMsg.Content[2].OfText.Text)
+}
+
+func TestToPrompt_PreservesOrderForInterleavedThinkingAndWebSearch(t *testing.T) {
+	t.Parallel()
+
+	prompt := fantasy.Prompt{
+		{
+			Role: fantasy.MessageRoleUser,
+			Content: []fantasy.MessagePart{
+				fantasy.TextPart{Text: "Search for release updates"},
+			},
+		},
+		{
+			Role: fantasy.MessageRoleAssistant,
+			Content: []fantasy.MessagePart{
+				fantasy.ReasoningPart{
+					Text: "first reasoning",
+					ProviderOptions: fantasy.ProviderOptions{
+						Name: &ReasoningOptionMetadata{Signature: "sig_1"},
+					},
+				},
+				fantasy.ToolCallPart{
+					ToolCallID:       "srvtoolu_01",
+					ToolName:         "web_search",
+					Input:            `{"query":"release updates"}`,
+					ProviderExecuted: true,
+				},
+				fantasy.ToolResultPart{
+					ToolCallID:       "srvtoolu_01",
+					ProviderExecuted: true,
+					ProviderOptions: fantasy.ProviderOptions{
+						Name: &WebSearchResultMetadata{Results: []WebSearchResultItem{{
+							URL:              "https://example.com/release-1",
+							Title:            "Release 1",
+							EncryptedContent: "enc_release_1",
+							PageAge:          "1 hour ago",
+						}}},
+					},
+				},
+				fantasy.ReasoningPart{
+					ProviderOptions: fantasy.ProviderOptions{
+						Name: &ReasoningOptionMetadata{RedactedData: "redacted_blob_1"},
+					},
+				},
+				fantasy.ToolCallPart{
+					ToolCallID:       "srvtoolu_02",
+					ToolName:         "web_search",
+					Input:            `{"query":"security notes"}`,
+					ProviderExecuted: true,
+				},
+				fantasy.ToolResultPart{
+					ToolCallID:       "srvtoolu_02",
+					ProviderExecuted: true,
+					ProviderOptions: fantasy.ProviderOptions{
+						Name: &WebSearchResultMetadata{Results: []WebSearchResultItem{{
+							URL:              "https://example.com/security-2",
+							Title:            "Security 2",
+							EncryptedContent: "enc_security_2",
+						}}},
+					},
+				},
+				fantasy.TextPart{
+					Text: "final answer",
+					ProviderOptions: fantasy.ProviderOptions{
+						Name: &ProviderCacheControlOptions{CacheControl: CacheControl{Type: "ephemeral"}},
+					},
+				},
+			},
+		},
+	}
+
+	_, messages, warnings := toPrompt(prompt, true)
+	require.Empty(t, warnings)
+	require.Len(t, messages, 2)
+
+	assistantMsg := messages[1]
+	require.Len(t, assistantMsg.Content, 7)
+
+	require.NotNil(t, assistantMsg.Content[0].OfThinking)
+	require.Equal(t, "sig_1", assistantMsg.Content[0].OfThinking.Signature)
+	require.Equal(t, "first reasoning", assistantMsg.Content[0].OfThinking.Thinking)
+
+	require.NotNil(t, assistantMsg.Content[1].OfServerToolUse)
+	require.Equal(t, "srvtoolu_01", assistantMsg.Content[1].OfServerToolUse.ID)
+	require.Equal(t, anthropic.ServerToolUseBlockParamName("web_search"), assistantMsg.Content[1].OfServerToolUse.Name)
+
+	require.NotNil(t, assistantMsg.Content[2].OfWebSearchToolResult)
+	require.Equal(t, "srvtoolu_01", assistantMsg.Content[2].OfWebSearchToolResult.ToolUseID)
+	firstResults := assistantMsg.Content[2].OfWebSearchToolResult.Content.OfWebSearchToolResultBlockItem
+	require.Len(t, firstResults, 1)
+	require.Equal(t, "enc_release_1", firstResults[0].EncryptedContent)
+	require.Equal(t, "1 hour ago", firstResults[0].PageAge.Value)
+
+	require.NotNil(t, assistantMsg.Content[3].OfRedactedThinking)
+	require.Equal(t, "redacted_blob_1", assistantMsg.Content[3].OfRedactedThinking.Data)
+
+	require.NotNil(t, assistantMsg.Content[4].OfServerToolUse)
+	require.Equal(t, "srvtoolu_02", assistantMsg.Content[4].OfServerToolUse.ID)
+
+	require.NotNil(t, assistantMsg.Content[5].OfWebSearchToolResult)
+	require.Equal(t, "srvtoolu_02", assistantMsg.Content[5].OfWebSearchToolResult.ToolUseID)
+	secondResults := assistantMsg.Content[5].OfWebSearchToolResult.Content.OfWebSearchToolResultBlockItem
+	require.Len(t, secondResults, 1)
+	require.Equal(t, "enc_security_2", secondResults[0].EncryptedContent)
+
+	require.NotNil(t, assistantMsg.Content[6].OfText)
+	require.Equal(t, "final answer", assistantMsg.Content[6].OfText.Text)
+	require.Equal(t, "ephemeral", string(assistantMsg.Content[6].OfText.CacheControl.Type))
+}
+
+func TestToPrompt_ReasoningMetadataMissingDifferentiates(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		options    fantasy.ProviderOptions
+		wantPrefix string
+	}{
+		{
+			name:       "missing metadata",
+			options:    nil,
+			wantPrefix: anthropicReasoningMetadataMissingPrefix,
+		},
+		{
+			name: "type mismatch",
+			options: fantasy.ProviderOptions{
+				Name: &ProviderCacheControlOptions{CacheControl: CacheControl{Type: "ephemeral"}},
+			},
+			wantPrefix: anthropicReasoningMetadataTypeMismatchPrefix,
+		},
+		{
+			name: "empty metadata",
+			options: fantasy.ProviderOptions{
+				Name: &ReasoningOptionMetadata{},
+			},
+			wantPrefix: anthropicReasoningMetadataEmptyPrefix,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			prompt := fantasy.Prompt{
+				{
+					Role: fantasy.MessageRoleUser,
+					Content: []fantasy.MessagePart{
+						fantasy.TextPart{Text: "hello"},
+					},
+				},
+				{
+					Role: fantasy.MessageRoleAssistant,
+					Content: []fantasy.MessagePart{
+						fantasy.ReasoningPart{Text: "hidden reasoning", ProviderOptions: tt.options},
+						fantasy.TextPart{Text: "visible answer"},
+					},
+				},
+			}
+
+			_, messages, warnings := toPrompt(prompt, true)
+			require.Len(t, warnings, 1)
+			require.True(t, strings.HasPrefix(warnings[0].Message, tt.wantPrefix), warnings[0].Message)
+			require.Len(t, messages, 2)
+			require.Len(t, messages[1].Content, 1)
+			require.NotNil(t, messages[1].Content[0].OfText)
+			require.Equal(t, "visible answer", messages[1].Content[0].OfText.Text)
+		})
+	}
+}
+
+func TestToPrompt_WebSearchProviderExecutedWithoutMetadata(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		options    fantasy.ProviderOptions
+		wantPrefix string
+	}{
+		{
+			name:       "missing metadata",
+			options:    nil,
+			wantPrefix: anthropicWebSearchMetadataMissingPrefix,
+		},
+		{
+			name: "type mismatch",
+			options: fantasy.ProviderOptions{
+				Name: &ReasoningOptionMetadata{Signature: "sig_wrong"},
+			},
+			wantPrefix: anthropicWebSearchMetadataTypeMismatchPrefix,
+		},
+		{
+			name: "empty metadata",
+			options: fantasy.ProviderOptions{
+				Name: &WebSearchResultMetadata{},
+			},
+			wantPrefix: anthropicWebSearchMetadataMissingPrefix,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			prompt := fantasy.Prompt{
+				{
+					Role: fantasy.MessageRoleUser,
+					Content: []fantasy.MessagePart{
+						fantasy.TextPart{Text: "search"},
+					},
+				},
+				{
+					Role: fantasy.MessageRoleAssistant,
+					Content: []fantasy.MessagePart{
+						fantasy.ToolCallPart{
+							ToolCallID:       "srvtoolu_missing",
+							ToolName:         "web_search",
+							Input:            `{"query":"missing"}`,
+							ProviderExecuted: true,
+						},
+						fantasy.ToolResultPart{
+							ToolCallID:       "srvtoolu_missing",
+							ProviderExecuted: true,
+							ProviderOptions:  tt.options,
+						},
+						fantasy.TextPart{Text: "fallback answer"},
+					},
+				},
+			}
+
+			_, messages, warnings := toPrompt(prompt, true)
+			require.Len(t, warnings, 2)
+			require.True(t, strings.HasPrefix(warnings[0].Message, tt.wantPrefix), warnings[0].Message)
+			require.True(t, strings.HasPrefix(warnings[1].Message, anthropicWebSearchToolCallDroppedPrefix), warnings[1].Message)
+			require.Len(t, messages, 2)
+			require.Len(t, messages[1].Content, 1)
+			require.NotNil(t, messages[1].Content[0].OfText)
+			require.Equal(t, "fallback answer", messages[1].Content[0].OfText.Text)
+		})
+	}
 }
 
 func TestGenerate_WebSearchResponse(t *testing.T) {
@@ -1454,6 +1727,126 @@ func TestStream_WebSearchResponse(t *testing.T) {
 	// Text block emits a text delta.
 	require.NotEmpty(t, textDeltas, "should have text deltas")
 	require.Equal(t, "Here are the results.", textDeltas[0].Delta)
+}
+
+func TestStream_RedactedThinkingEmitsStartAndEnd(t *testing.T) {
+	t.Parallel()
+
+	parts := streamAnthropicParts(t, []string{
+		anthropicSSEEvent("message_start", `{"type":"message_start","message":{"id":"msg_redacted","type":"message","role":"assistant","model":"claude-sonnet-4-20250514","content":[],"stop_reason":null,"usage":{"input_tokens":1,"output_tokens":0}}}`),
+		anthropicSSEEvent("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"redacted_blob"}}`),
+		anthropicSSEEvent("content_block_stop", `{"type":"content_block_stop","index":0}`),
+		anthropicSSEEvent("message_stop", `{"type":"message_stop"}`),
+	})
+
+	starts := streamPartsByType(parts, fantasy.StreamPartTypeReasoningStart)
+	ends := streamPartsByType(parts, fantasy.StreamPartTypeReasoningEnd)
+	require.Len(t, starts, 1)
+	require.Len(t, ends, 1)
+	require.Equal(t, starts[0].ID, ends[0].ID)
+	require.Equal(t, "redacted_blob", requireReasoningMetadata(t, starts[0].ProviderMetadata).RedactedData)
+	require.Equal(t, "redacted_blob", requireReasoningMetadata(t, ends[0].ProviderMetadata).RedactedData)
+}
+
+func TestStream_ThinkingSignaturePresentOnEnd(t *testing.T) {
+	t.Parallel()
+
+	parts := streamAnthropicParts(t, []string{
+		anthropicSSEEvent("message_start", `{"type":"message_start","message":{"id":"msg_sig","type":"message","role":"assistant","model":"claude-sonnet-4-20250514","content":[],"stop_reason":null,"usage":{"input_tokens":1,"output_tokens":0}}}`),
+		anthropicSSEEvent("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`),
+		anthropicSSEEvent("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"first thought"}}`),
+		anthropicSSEEvent("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig_123"}}`),
+		anthropicSSEEvent("content_block_stop", `{"type":"content_block_stop","index":0}`),
+		anthropicSSEEvent("message_stop", `{"type":"message_stop"}`),
+	})
+
+	deltas := streamPartsByType(parts, fantasy.StreamPartTypeReasoningDelta)
+	ends := streamPartsByType(parts, fantasy.StreamPartTypeReasoningEnd)
+	require.Len(t, deltas, 2)
+	require.Equal(t, "first thought", deltas[0].Delta)
+	require.Equal(t, "sig_123", requireReasoningMetadata(t, deltas[1].ProviderMetadata).Signature)
+	require.Len(t, ends, 1)
+	require.Equal(t, "sig_123", requireReasoningMetadata(t, ends[0].ProviderMetadata).Signature)
+}
+
+func TestStream_NilMetadataDeltaDoesNotEraseSignatureOnEnd(t *testing.T) {
+	t.Parallel()
+
+	parts := streamAnthropicParts(t, []string{
+		anthropicSSEEvent("message_start", `{"type":"message_start","message":{"id":"msg_sig_tail","type":"message","role":"assistant","model":"claude-sonnet-4-20250514","content":[],"stop_reason":null,"usage":{"input_tokens":1,"output_tokens":0}}}`),
+		anthropicSSEEvent("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`),
+		anthropicSSEEvent("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"first"}}`),
+		anthropicSSEEvent("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig_tail"}}`),
+		anthropicSSEEvent("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"second"}}`),
+		anthropicSSEEvent("content_block_stop", `{"type":"content_block_stop","index":0}`),
+		anthropicSSEEvent("message_stop", `{"type":"message_stop"}`),
+	})
+
+	deltas := streamPartsByType(parts, fantasy.StreamPartTypeReasoningDelta)
+	ends := streamPartsByType(parts, fantasy.StreamPartTypeReasoningEnd)
+	require.Len(t, deltas, 3)
+	require.Equal(t, "first", deltas[0].Delta)
+	require.Len(t, deltas[0].ProviderMetadata, 0)
+	require.Equal(t, "sig_tail", requireReasoningMetadata(t, deltas[1].ProviderMetadata).Signature)
+	require.Equal(t, "second", deltas[2].Delta)
+	require.Len(t, deltas[2].ProviderMetadata, 0)
+	require.Len(t, ends, 1)
+	require.Equal(t, "sig_tail", requireReasoningMetadata(t, ends[0].ProviderMetadata).Signature)
+}
+
+func TestStream_InterleavedThinkingAndRedactedThinking(t *testing.T) {
+	t.Parallel()
+
+	parts := streamAnthropicParts(t, []string{
+		anthropicSSEEvent("message_start", `{"type":"message_start","message":{"id":"msg_interleaved","type":"message","role":"assistant","model":"claude-sonnet-4-20250514","content":[],"stop_reason":null,"usage":{"input_tokens":1,"output_tokens":0}}}`),
+		anthropicSSEEvent("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"redacted_0"}}`),
+		anthropicSSEEvent("content_block_stop", `{"type":"content_block_stop","index":0}`),
+		anthropicSSEEvent("content_block_start", `{"type":"content_block_start","index":1,"content_block":{"type":"thinking","thinking":""}}`),
+		anthropicSSEEvent("content_block_delta", `{"type":"content_block_delta","index":1,"delta":{"type":"thinking_delta","thinking":"reasoning_1"}}`),
+		anthropicSSEEvent("content_block_delta", `{"type":"content_block_delta","index":1,"delta":{"type":"signature_delta","signature":"sig_1"}}`),
+		anthropicSSEEvent("content_block_stop", `{"type":"content_block_stop","index":1}`),
+		anthropicSSEEvent("content_block_start", `{"type":"content_block_start","index":2,"content_block":{"type":"redacted_thinking","data":"redacted_2"}}`),
+		anthropicSSEEvent("content_block_stop", `{"type":"content_block_stop","index":2}`),
+		anthropicSSEEvent("message_stop", `{"type":"message_stop"}`),
+	})
+
+	var reasoningParts []fantasy.StreamPart
+	for _, part := range parts {
+		switch part.Type {
+		case fantasy.StreamPartTypeReasoningStart, fantasy.StreamPartTypeReasoningDelta, fantasy.StreamPartTypeReasoningEnd:
+			reasoningParts = append(reasoningParts, part)
+		}
+	}
+
+	require.Len(t, reasoningParts, 8)
+	require.Equal(t, fantasy.StreamPartTypeReasoningStart, reasoningParts[0].Type)
+	require.Equal(t, "0", reasoningParts[0].ID)
+	require.Equal(t, "redacted_0", requireReasoningMetadata(t, reasoningParts[0].ProviderMetadata).RedactedData)
+
+	require.Equal(t, fantasy.StreamPartTypeReasoningEnd, reasoningParts[1].Type)
+	require.Equal(t, "0", reasoningParts[1].ID)
+	require.Equal(t, "redacted_0", requireReasoningMetadata(t, reasoningParts[1].ProviderMetadata).RedactedData)
+
+	require.Equal(t, fantasy.StreamPartTypeReasoningStart, reasoningParts[2].Type)
+	require.Equal(t, "1", reasoningParts[2].ID)
+	require.Len(t, reasoningParts[2].ProviderMetadata, 0)
+
+	require.Equal(t, fantasy.StreamPartTypeReasoningDelta, reasoningParts[3].Type)
+	require.Equal(t, "reasoning_1", reasoningParts[3].Delta)
+	require.Equal(t, fantasy.StreamPartTypeReasoningDelta, reasoningParts[4].Type)
+	require.Equal(t, "sig_1", requireReasoningMetadata(t, reasoningParts[4].ProviderMetadata).Signature)
+
+	require.Equal(t, fantasy.StreamPartTypeReasoningEnd, reasoningParts[5].Type)
+	require.Equal(t, "1", reasoningParts[5].ID)
+	require.Equal(t, "sig_1", requireReasoningMetadata(t, reasoningParts[5].ProviderMetadata).Signature)
+
+	require.Equal(t, fantasy.StreamPartTypeReasoningStart, reasoningParts[6].Type)
+	require.Equal(t, "2", reasoningParts[6].ID)
+	require.Equal(t, "redacted_2", requireReasoningMetadata(t, reasoningParts[6].ProviderMetadata).RedactedData)
+
+	require.Equal(t, fantasy.StreamPartTypeReasoningEnd, reasoningParts[7].Type)
+	require.Equal(t, "2", reasoningParts[7].ID)
+	require.Equal(t, "redacted_2", requireReasoningMetadata(t, reasoningParts[7].ProviderMetadata).RedactedData)
 }
 
 func TestGenerate_ToolChoiceNone(t *testing.T) {

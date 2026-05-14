@@ -65,6 +65,15 @@ const (
 	VertexAuthScope = "https://www.googleapis.com/auth/cloud-platform"
 )
 
+const (
+	anthropicReasoningMetadataMissingPrefix      = "[anthropic.reasoning_metadata_missing]"
+	anthropicReasoningMetadataTypeMismatchPrefix = "[anthropic.reasoning_metadata_type_mismatch]"
+	anthropicReasoningMetadataEmptyPrefix        = "[anthropic.reasoning_metadata_empty]"
+	anthropicWebSearchMetadataMissingPrefix      = "[anthropic.web_search_metadata_missing]"
+	anthropicWebSearchMetadataTypeMismatchPrefix = "[anthropic.web_search_metadata_type_mismatch]"
+	anthropicWebSearchToolCallDroppedPrefix      = "[anthropic.web_search_tool_call_dropped]"
+)
+
 type options struct {
 	baseURL   string
 	apiKey    string
@@ -398,6 +407,108 @@ func GetReasoningMetadata(providerOptions fantasy.ProviderOptions) *ReasoningOpt
 		}
 	}
 	return nil
+}
+
+func metadataWarning(prefix, message string, args ...any) fantasy.CallWarning {
+	warning := message
+	if len(args) > 0 {
+		warning = fmt.Sprintf(message, args...)
+	}
+	return fantasy.CallWarning{
+		Type:    fantasy.CallWarningTypeOther,
+		Message: prefix + " " + warning,
+	}
+}
+
+func reasoningMetadataForEncode(options fantasy.ProviderOptions) (*ReasoningOptionMetadata, *fantasy.CallWarning) {
+	providerOption, ok := options[Name]
+	if !ok {
+		warning := metadataWarning(
+			anthropicReasoningMetadataMissingPrefix,
+			"dropping reasoning block because Anthropic reasoning metadata is missing",
+		)
+		return nil, &warning
+	}
+	metadata, ok := providerOption.(*ReasoningOptionMetadata)
+	if !ok {
+		warning := metadataWarning(
+			anthropicReasoningMetadataTypeMismatchPrefix,
+			"dropping reasoning block because Anthropic reasoning metadata had unexpected type %T",
+			providerOption,
+		)
+		return nil, &warning
+	}
+	if metadata == nil || (metadata.Signature == "" && metadata.RedactedData == "") {
+		warning := metadataWarning(
+			anthropicReasoningMetadataEmptyPrefix,
+			"dropping reasoning block because Anthropic reasoning metadata was empty",
+		)
+		return nil, &warning
+	}
+	return metadata, nil
+}
+
+func webSearchResultMetadataForEncode(options fantasy.ProviderOptions) (*WebSearchResultMetadata, *fantasy.CallWarning) {
+	providerOption, ok := options[Name]
+	if !ok {
+		warning := metadataWarning(
+			anthropicWebSearchMetadataMissingPrefix,
+			"dropping provider-executed web_search_tool_result because Anthropic web search metadata is missing",
+		)
+		return nil, &warning
+	}
+	metadata, ok := providerOption.(*WebSearchResultMetadata)
+	if !ok {
+		warning := metadataWarning(
+			anthropicWebSearchMetadataTypeMismatchPrefix,
+			"dropping provider-executed web_search_tool_result because Anthropic web search metadata had unexpected type %T",
+			providerOption,
+		)
+		return nil, &warning
+	}
+	if metadata == nil || len(metadata.Results) == 0 {
+		warning := metadataWarning(
+			anthropicWebSearchMetadataMissingPrefix,
+			"dropping provider-executed web_search_tool_result because Anthropic web search metadata had no results",
+		)
+		return nil, &warning
+	}
+	return metadata, nil
+}
+
+func dropServerToolUseBlock(
+	content []anthropic.ContentBlockParamUnion,
+	toolCallID string,
+) ([]anthropic.ContentBlockParamUnion, bool) {
+	for i := len(content) - 1; i >= 0; i-- {
+		serverToolUse := content[i].OfServerToolUse
+		if serverToolUse == nil || serverToolUse.ID != toolCallID {
+			continue
+		}
+		return append(content[:i], content[i+1:]...), true
+	}
+	return content, false
+}
+
+func reasoningEndProviderMetadata(contentBlock anthropic.ContentBlockUnion) fantasy.ProviderMetadata {
+	switch contentBlock.Type {
+	case "thinking":
+		if contentBlock.Signature == "" {
+			return nil
+		}
+		return fantasy.ProviderMetadata{
+			Name: &ReasoningOptionMetadata{Signature: contentBlock.Signature},
+		}
+	case "redacted_thinking":
+		if contentBlock.Data == "" {
+			return nil
+		}
+		return fantasy.ProviderMetadata{
+			Name: &ReasoningOptionMetadata{RedactedData: contentBlock.Data},
+		}
+	default:
+		return nil
+	}
 }
 
 type messageBlock struct {
@@ -960,25 +1071,16 @@ func toPrompt(prompt fantasy.Prompt, sendReasoningData bool) ([]anthropic.TextBl
 							})
 							continue
 						}
-						reasoningMetadata := GetReasoningMetadata(part.Options())
-						if reasoningMetadata == nil {
-							warnings = append(warnings, fantasy.CallWarning{
-								Type:    fantasy.CallWarningTypeOther,
-								Message: "unsupported reasoning metadata",
-							})
+						reasoningMetadata, warning := reasoningMetadataForEncode(part.Options())
+						if warning != nil {
+							warnings = append(warnings, *warning)
 							continue
 						}
 
 						if reasoningMetadata.Signature != "" {
 							anthropicContent = append(anthropicContent, anthropic.NewThinkingBlock(reasoningMetadata.Signature, reasoning.Text))
-						} else if reasoningMetadata.RedactedData != "" {
-							anthropicContent = append(anthropicContent, anthropic.NewRedactedThinkingBlock(reasoningMetadata.RedactedData))
 						} else {
-							warnings = append(warnings, fantasy.CallWarning{
-								Type:    fantasy.CallWarningTypeOther,
-								Message: "unsupported reasoning metadata",
-							})
-							continue
+							anthropicContent = append(anthropicContent, anthropic.NewRedactedThinkingBlock(reasoningMetadata.RedactedData))
 						}
 					case fantasy.ContentTypeToolCall:
 						toolCall, ok := fantasy.AsMessagePart[fantasy.ToolCallPart](part)
@@ -1020,11 +1122,19 @@ func toPrompt(prompt fantasy.Prompt, sendReasoningData bool) ([]anthropic.TextBl
 						if result.ProviderExecuted {
 							// Reconstruct web_search_tool_result block
 							// with encrypted_content for round-tripping.
-							searchMeta := &WebSearchResultMetadata{}
-							if webMeta, ok := result.ProviderOptions[Name]; ok {
-								if typed, ok := webMeta.(*WebSearchResultMetadata); ok {
-									searchMeta = typed
+							searchMeta, warning := webSearchResultMetadataForEncode(result.ProviderOptions)
+							if warning != nil {
+								warnings = append(warnings, *warning)
+								var dropped bool
+								anthropicContent, dropped = dropServerToolUseBlock(anthropicContent, result.ToolCallID)
+								if dropped {
+									warnings = append(warnings, metadataWarning(
+										anthropicWebSearchToolCallDroppedPrefix,
+										"dropping provider-executed web_search server_tool_use %q because its result metadata was unusable",
+										result.ToolCallID,
+									))
 								}
+								continue
 							}
 							anthropicContent = append(anthropicContent, buildWebSearchToolResultBlock(result.ToolCallID, searchMeta))
 							continue
@@ -1323,8 +1433,17 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 					}
 				case "thinking":
 					if !yield(fantasy.StreamPart{
-						Type: fantasy.StreamPartTypeReasoningEnd,
-						ID:   fmt.Sprintf("%d", chunk.Index),
+						Type:             fantasy.StreamPartTypeReasoningEnd,
+						ID:               fmt.Sprintf("%d", chunk.Index),
+						ProviderMetadata: reasoningEndProviderMetadata(contentBlock),
+					}) {
+						return
+					}
+				case "redacted_thinking":
+					if !yield(fantasy.StreamPart{
+						Type:             fantasy.StreamPartTypeReasoningEnd,
+						ID:               fmt.Sprintf("%d", chunk.Index),
+						ProviderMetadata: reasoningEndProviderMetadata(contentBlock),
 					}) {
 						return
 					}
