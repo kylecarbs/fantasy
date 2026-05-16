@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 
 	"charm.land/fantasy"
@@ -56,6 +57,10 @@ func PrepareCallFunc(_ fantasy.LanguageModel, params *openaisdk.ChatCompletionNe
 	if providerOptions.PromptCacheKey != nil {
 		params.PromptCacheKey = param.NewOpt(*providerOptions.PromptCacheKey)
 	}
+
+	extraFields := make(map[string]any)
+	maps.Copy(extraFields, providerOptions.ExtraBody)
+	params.SetExtraFields(extraFields)
 	return nil, nil
 }
 
