@@ -3184,7 +3184,7 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false, false)
 
 		require.NoError(t, err)
 
@@ -3212,7 +3212,7 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false, false)
 
 		require.NoError(t, err)
 
@@ -3251,7 +3251,7 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false, false)
 
 		require.NoError(t, err)
 
@@ -3274,7 +3274,7 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false, false)
 
 		require.NoError(t, err)
 
@@ -3298,7 +3298,7 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false, false)
 
 		require.NoError(t, err)
 
@@ -3331,7 +3331,7 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false, false)
 
 		require.NoError(t, err)
 
@@ -3364,14 +3364,13 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false, false)
 
 		require.NoError(t, err)
 
 		require.Len(t, input, 2)
 		require.Empty(t, warnings)
 	})
-
 }
 
 func TestParseContextTooLargeError(t *testing.T) {
@@ -4015,7 +4014,7 @@ func TestResponsesToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 	t.Run("store false skips item reference", func(t *testing.T) {
 		t.Parallel()
 
-		input, warnings, err := toResponsesPrompt(prompt, "system instructions", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system instructions", false, false)
 
 		require.NoError(t, err)
 
@@ -4029,7 +4028,7 @@ func TestResponsesToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 	t.Run("store true skips item reference", func(t *testing.T) {
 		t.Parallel()
 
-		input, warnings, err := toResponsesPrompt(prompt, "system instructions", true)
+		input, warnings, err := toResponsesPrompt(prompt, "system instructions", true, false)
 
 		require.NoError(t, err)
 
@@ -4083,7 +4082,7 @@ func TestResponsesToPrompt_ReasoningWithStore(t *testing.T) {
 	t.Run("store true emits item_reference for reasoning", func(t *testing.T) {
 		t.Parallel()
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", true)
+		input, warnings, err := toResponsesPrompt(prompt, "system", true, false)
 
 		require.NoError(t, err)
 		require.Empty(t, warnings)
@@ -4134,7 +4133,7 @@ func TestResponsesToPrompt_ReasoningWithStore(t *testing.T) {
 			},
 		}
 
-		input, warnings, err := toResponsesPrompt(noIDPrompt, "system", true)
+		input, warnings, err := toResponsesPrompt(noIDPrompt, "system", true, false)
 
 		require.NoError(t, err)
 		require.Empty(t, warnings)
@@ -4151,7 +4150,7 @@ func TestResponsesToPrompt_ReasoningWithStore(t *testing.T) {
 	t.Run("store false skips reasoning", func(t *testing.T) {
 		t.Parallel()
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false, false)
 
 		require.NoError(t, err)
 		require.Empty(t, warnings)
@@ -4216,7 +4215,7 @@ func TestResponsesToPrompt_ReasoningWithWebSearchCombined(t *testing.T) {
 	t.Run("store true pairs reasoning and web search", func(t *testing.T) {
 		t.Parallel()
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", true)
+		input, warnings, err := toResponsesPrompt(prompt, "system", true, false)
 
 		require.NoError(t, err)
 		require.Empty(t, warnings)
@@ -4236,7 +4235,7 @@ func TestResponsesToPrompt_ReasoningWithWebSearchCombined(t *testing.T) {
 	t.Run("store false skips both reasoning and provider tool call", func(t *testing.T) {
 		t.Parallel()
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false, false)
 
 		require.NoError(t, err)
 		require.Empty(t, warnings)
@@ -4272,7 +4271,7 @@ func TestResponsesToPrompt_WebSearchRequiresReasoningReference(t *testing.T) {
 				fantasy.TextPart{Text: "Search completed."},
 			},
 		},
-	}, "system", true)
+	}, "system", true, false)
 
 	require.NoError(t, err)
 	require.Empty(t, warnings)
@@ -4329,7 +4328,7 @@ func TestResponsesToPrompt_ReasoningWithFunctionCallCombined(t *testing.T) {
 		},
 	}
 
-	input, warnings, err := toResponsesPrompt(prompt, "system", true)
+	input, warnings, err := toResponsesPrompt(prompt, "system", true, false)
 
 	require.NoError(t, err)
 	require.Empty(t, warnings)
@@ -4905,7 +4904,7 @@ func TestComputerUseGenerateRoundTrip_NonImageResult(t *testing.T) {
 		},
 	}
 
-	input, warnings, err := toResponsesPrompt(prompt, "system", false)
+	input, warnings, err := toResponsesPrompt(prompt, "system", false, false)
 	require.NoError(t, err)
 
 	// Should warn about non-image result.
