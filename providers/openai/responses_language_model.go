@@ -178,15 +178,12 @@ func (o responsesLanguageModel) prepareParams(call fantasy.Call) (*responses.Res
 
 	storeEnabled := openaiOptions != nil && openaiOptions.Store != nil && *openaiOptions.Store
 	allowOrphanFunctionOutputs := openaiOptions != nil && openaiOptions.PreviousResponseID != nil && *openaiOptions.PreviousResponseID != ""
-	input, inputWarnings, err := toResponsesPrompt(call.Prompt, modelConfig.systemMessageMode, storeEnabled)
-	if allowOrphanFunctionOutputs {
-		input, inputWarnings, err = toResponsesPromptWithValidation(
-			call.Prompt,
-			modelConfig.systemMessageMode,
-			storeEnabled,
-			true,
-		)
-	}
+	input, inputWarnings, err := toResponsesPrompt(
+		call.Prompt,
+		modelConfig.systemMessageMode,
+		storeEnabled,
+		allowOrphanFunctionOutputs,
+	)
 	warnings = append(warnings, inputWarnings...)
 	if err != nil {
 		return nil, warnings, err
@@ -409,11 +406,7 @@ func responsesUsage(resp responses.Response) fantasy.Usage {
 	return usage
 }
 
-func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bool) (responses.ResponseInputParam, []fantasy.CallWarning, error) {
-	return toResponsesPromptWithValidation(prompt, systemMessageMode, store, false)
-}
-
-func toResponsesPromptWithValidation(
+func toResponsesPrompt(
 	prompt fantasy.Prompt,
 	systemMessageMode string,
 	store bool,
@@ -759,7 +752,7 @@ func toResponsesPromptWithValidation(
 		}
 	}
 
-	if err := validateResponsesInputWithOptions(input, allowOrphanFunctionOutputs); err != nil {
+	if err := validateResponsesInput(input, allowOrphanFunctionOutputs); err != nil {
 		return nil, warnings, err
 	}
 
@@ -771,21 +764,14 @@ func isResponsesWebSearchToolCall(toolCallPart fantasy.ToolCallPart) bool {
 		toolCallPart.ToolName == "web_search_preview"
 }
 
-func validateResponsesInput(input responses.ResponseInputParam) error {
-	if err := validateResponsesFunctionCallOutputs(input); err != nil {
+func validateResponsesInput(input responses.ResponseInputParam, allowOrphanFunctionOutputs bool) error {
+	if err := validateResponsesFunctionCallOutputs(input, allowOrphanFunctionOutputs); err != nil {
 		return err
 	}
 	return validateResponsesItemReferences(input)
 }
 
-func validateResponsesInputWithOptions(input responses.ResponseInputParam, allowOrphanFunctionOutputs bool) error {
-	if allowOrphanFunctionOutputs {
-		return validateResponsesItemReferences(input)
-	}
-	return validateResponsesInput(input)
-}
-
-func validateResponsesFunctionCallOutputs(input responses.ResponseInputParam) error {
+func validateResponsesFunctionCallOutputs(input responses.ResponseInputParam, allowOrphanFunctionOutputs bool) error {
 	type callState struct {
 		calls       int
 		outputs     int
@@ -843,7 +829,10 @@ func validateResponsesFunctionCallOutputs(input responses.ResponseInputParam) er
 	for _, callID := range outputIDs {
 		state := states[callID]
 		if state.calls == 0 {
-			return fmt.Errorf("openai responses prompt has function_call_output without function_call for call_id %q", callID)
+			if !allowOrphanFunctionOutputs {
+				return fmt.Errorf("openai responses prompt has function_call_output without function_call for call_id %q", callID)
+			}
+			continue
 		}
 		if state.firstOutput < state.firstCall {
 			return fmt.Errorf("openai responses prompt has function_call_output before function_call for call_id %q", callID)

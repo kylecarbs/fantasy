@@ -148,7 +148,41 @@ func TestPrepareParams_PreviousResponseID_Validation(t *testing.T) {
 			testTextMessage(fantasy.MessageRoleUser, "hello"),
 		}, opts))
 		require.NoError(t, err)
-		_ = warnings
+		require.Empty(t, warnings)
+	})
+
+	t.Run("allows orphan function call output", func(t *testing.T) {
+		t.Parallel()
+
+		_, warnings, err := lm.prepareParams(testCall(fantasy.Prompt{
+			testResponsesToolResultMessage("call_orphan", "done"),
+			testTextMessage(fantasy.MessageRoleUser, "hello"),
+		}, opts))
+		require.NoError(t, err)
+		require.Empty(t, warnings)
+	})
+
+	t.Run("rejects duplicate orphan function call outputs", func(t *testing.T) {
+		t.Parallel()
+
+		_, warnings, err := lm.prepareParams(testCall(fantasy.Prompt{
+			{
+				Role: fantasy.MessageRoleTool,
+				Content: []fantasy.MessagePart{
+					fantasy.ToolResultPart{
+						ToolCallID: "call_duplicate",
+						Output:     fantasy.ToolResultOutputContentText{Text: "first"},
+					},
+					fantasy.ToolResultPart{
+						ToolCallID: "call_duplicate",
+						Output:     fantasy.ToolResultOutputContentText{Text: "second"},
+					},
+				},
+			},
+			testTextMessage(fantasy.MessageRoleUser, "hello"),
+		}, opts))
+		require.EqualError(t, err, `openai responses prompt has duplicate function_call_output for call_id "call_duplicate"`)
+		require.Empty(t, warnings)
 	})
 
 	t.Run("rejects without store", func(t *testing.T) {
@@ -471,7 +505,7 @@ func TestPrepareParams_ValidatesFunctionCallOutputPairing(t *testing.T) {
 
 		input, warnings, err := toResponsesPrompt(fantasy.Prompt{
 			testResponsesProviderToolResultMessage("ws_01"),
-		}, "system", false)
+		}, "system", false, false)
 		require.NoError(t, err)
 		require.Empty(t, warnings)
 		require.Empty(t, input)
@@ -498,7 +532,7 @@ func TestValidateResponsesInput_WebSearchReferenceRequiresReasoning(t *testing.T
 		err := validateResponsesInput(responses.ResponseInputParam{
 			responses.ResponseInputItemParamOfItemReference("rs_valid"),
 			responses.ResponseInputItemParamOfItemReference("ws_valid"),
-		})
+		}, false)
 		require.NoError(t, err)
 	})
 
@@ -507,7 +541,7 @@ func TestValidateResponsesInput_WebSearchReferenceRequiresReasoning(t *testing.T
 
 		err := validateResponsesInput(responses.ResponseInputParam{
 			responses.ResponseInputItemParamOfItemReference("ws_orphan"),
-		})
+		}, false)
 		require.EqualError(t, err, `openai responses prompt has web_search_call item_reference without preceding reasoning item_reference for item_id "ws_orphan"`)
 	})
 
@@ -518,7 +552,16 @@ func TestValidateResponsesInput_WebSearchReferenceRequiresReasoning(t *testing.T
 			responses.ResponseInputItemParamOfItemReference("rs_valid"),
 			responses.ResponseInputItemParamOfMessage("text", responses.EasyInputMessageRoleAssistant),
 			responses.ResponseInputItemParamOfItemReference("ws_orphan"),
-		})
+		}, false)
+		require.EqualError(t, err, `openai responses prompt has web_search_call item_reference without preceding reasoning item_reference for item_id "ws_orphan"`)
+	})
+
+	t.Run("web search references are checked when orphan outputs are allowed", func(t *testing.T) {
+		t.Parallel()
+
+		err := validateResponsesInput(responses.ResponseInputParam{
+			responses.ResponseInputItemParamOfItemReference("ws_orphan"),
+		}, true)
 		require.EqualError(t, err, `openai responses prompt has web_search_call item_reference without preceding reasoning item_reference for item_id "ws_orphan"`)
 	})
 }
