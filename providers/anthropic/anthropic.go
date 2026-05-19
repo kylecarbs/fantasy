@@ -400,6 +400,75 @@ func GetReasoningMetadata(providerOptions fantasy.ProviderOptions) *ReasoningOpt
 	return nil
 }
 
+type providerExecutedOperation struct {
+	id    string
+	name  string
+	input string
+}
+
+func newProviderExecutedOperation(id, name, input string) providerExecutedOperation {
+	return providerExecutedOperation{id: id, name: name, input: input}
+}
+
+func (op providerExecutedOperation) appendContent(content []fantasy.Content) []fantasy.Content {
+	return append(content, fantasy.ToolCallContent{
+		ToolCallID:       op.id,
+		ToolName:         op.name,
+		Input:            op.input,
+		ProviderExecuted: true,
+	})
+}
+
+func (op providerExecutedOperation) yieldToolCall(yield func(fantasy.StreamPart) bool) bool {
+	// Provider-executed operations are internally atomic. The adjacent
+	// legacy tool-call lifecycle is a compatibility encoding for consumers.
+	return yield(fantasy.StreamPart{
+		Type:             fantasy.StreamPartTypeToolInputStart,
+		ID:               op.id,
+		ToolCallName:     op.name,
+		ToolCallInput:    "",
+		ProviderExecuted: true,
+	}) && yield(fantasy.StreamPart{
+		Type:             fantasy.StreamPartTypeToolInputEnd,
+		ID:               op.id,
+		ProviderExecuted: true,
+	}) && yield(fantasy.StreamPart{
+		Type:             fantasy.StreamPartTypeToolCall,
+		ID:               op.id,
+		ToolCallName:     op.name,
+		ToolCallInput:    op.input,
+		ProviderExecuted: true,
+	})
+}
+
+func firstProviderExecutedOperationID(operations map[string]providerExecutedOperation) string {
+	for id := range operations {
+		return id
+	}
+	return ""
+}
+
+func incompleteProviderExecutedOperationError(id string) error {
+	if id == "" {
+		return fmt.Errorf("anthropic provider-executed operation ended without a matching result")
+	}
+	return fmt.Errorf("anthropic provider-executed operation %q ended without a matching result", id)
+}
+
+func orphanProviderExecutedResultError(id string) error {
+	if id == "" {
+		return fmt.Errorf("anthropic provider-executed result arrived without a matching server tool use")
+	}
+	return fmt.Errorf("anthropic provider-executed result %q arrived without a matching server tool use", id)
+}
+
+func duplicateProviderExecutedOperationError(id string) error {
+	if id == "" {
+		return fmt.Errorf("anthropic provider-executed operation used a duplicate ID")
+	}
+	return fmt.Errorf("anthropic provider-executed operation used duplicate ID %q", id)
+}
+
 type messageBlock struct {
 	Role     fantasy.MessageRole
 	Messages []fantasy.Message
@@ -1118,6 +1187,7 @@ func (a languageModel) Generate(ctx context.Context, call fantasy.Call) (*fantas
 	}
 
 	var content []fantasy.Content
+	providerExecutedOperations := make(map[string]providerExecutedOperation)
 	for _, block := range response.Content {
 		switch block.Type {
 		case "text":
@@ -1174,12 +1244,14 @@ func (a languageModel) Generate(ctx context.Context, call fantasy.Call) (*fantas
 			if b, err := json.Marshal(serverToolUse.Input); err == nil {
 				inputStr = string(b)
 			}
-			content = append(content, fantasy.ToolCallContent{
-				ToolCallID:       serverToolUse.ID,
-				ToolName:         string(serverToolUse.Name),
-				Input:            inputStr,
-				ProviderExecuted: true,
-			})
+			if _, exists := providerExecutedOperations[serverToolUse.ID]; exists {
+				return nil, duplicateProviderExecutedOperationError(serverToolUse.ID)
+			}
+			providerExecutedOperations[serverToolUse.ID] = newProviderExecutedOperation(
+				serverToolUse.ID,
+				string(serverToolUse.Name),
+				inputStr,
+			)
 		case "web_search_tool_result":
 			webSearchResult, ok := block.AsAny().(anthropic.WebSearchToolResultBlock)
 			if !ok {
@@ -1214,8 +1286,20 @@ func (a languageModel) Generate(ctx context.Context, call fantasy.Call) (*fantas
 					},
 				}
 			}
+			operation, ok := providerExecutedOperations[webSearchResult.ToolUseID]
+			if !ok {
+				return nil, orphanProviderExecutedResultError(webSearchResult.ToolUseID)
+			}
+			content = operation.appendContent(content)
 			content = append(content, toolResult)
+			delete(providerExecutedOperations, webSearchResult.ToolUseID)
 		}
+	}
+
+	if len(providerExecutedOperations) > 0 {
+		return nil, incompleteProviderExecutedOperationError(
+			firstProviderExecutedOperationID(providerExecutedOperations),
+		)
 	}
 
 	return &fantasy.Response{
@@ -1244,6 +1328,7 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 
 	stream := a.client.Messages.NewStreaming(ctx, *params, reqOpts...)
 	acc := anthropic.Message{}
+	providerExecutedOperations := make(map[string]providerExecutedOperation)
 	return func(yield func(fantasy.StreamPart) bool) {
 		if len(warnings) > 0 {
 			if !yield(fantasy.StreamPart{
@@ -1297,15 +1382,10 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 						return
 					}
 				case "server_tool_use":
-					if !yield(fantasy.StreamPart{
-						Type:             fantasy.StreamPartTypeToolInputStart,
-						ID:               chunk.ContentBlock.ID,
-						ToolCallName:     chunk.ContentBlock.Name,
-						ToolCallInput:    "",
-						ProviderExecuted: true,
-					}) {
-						return
-					}
+					// Provider-executed calls are buffered at content_block_stop,
+					// after Anthropic has accumulated any input_json_delta
+					// fragments. Consumers do not see a successful operation
+					// until the matching result arrives.
 				}
 			case "content_block_stop":
 				if len(acc.Content)-1 < int(chunk.Index) {
@@ -1343,22 +1423,20 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 						return
 					}
 				case "server_tool_use":
-					if !yield(fantasy.StreamPart{
-						Type:             fantasy.StreamPartTypeToolInputEnd,
-						ID:               contentBlock.ID,
-						ProviderExecuted: true,
-					}) {
+					operation := newProviderExecutedOperation(
+						contentBlock.ID,
+						contentBlock.Name,
+						string(contentBlock.Input),
+					)
+					if _, exists := providerExecutedOperations[operation.id]; exists {
+						yield(fantasy.StreamPart{
+							Type:  fantasy.StreamPartTypeError,
+							Error: duplicateProviderExecutedOperationError(operation.id),
+						})
 						return
 					}
-					if !yield(fantasy.StreamPart{
-						Type:             fantasy.StreamPartTypeToolCall,
-						ID:               contentBlock.ID,
-						ToolCallName:     contentBlock.Name,
-						ToolCallInput:    string(contentBlock.Input),
-						ProviderExecuted: true,
-					}) {
-						return
-					}
+					providerExecutedOperations[operation.id] = operation
+
 				case "web_search_tool_result":
 					// Read search results directly from the ContentBlockUnion
 					// struct fields instead of using AsAny(). The Anthropic SDK's
@@ -1366,6 +1444,14 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 					// which corrupts JSON.raw for inline union types like
 					// WebSearchToolResultBlockContentUnion. The struct fields
 					// themselves remain correctly populated from content_block_start.
+					operation, ok := providerExecutedOperations[contentBlock.ToolUseID]
+					if !ok {
+						yield(fantasy.StreamPart{
+							Type:  fantasy.StreamPartTypeError,
+							Error: orphanProviderExecutedResultError(contentBlock.ToolUseID),
+						})
+						return
+					}
 					var metadataResults []WebSearchResultItem
 					var providerMeta fantasy.ProviderMetadata
 					if items := contentBlock.Content.OfWebSearchResultBlockArray; len(items) > 0 {
@@ -1394,6 +1480,10 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 							},
 						}
 					}
+					if !operation.yieldToolCall(yield) {
+						return
+					}
+					delete(providerExecutedOperations, contentBlock.ToolUseID)
 					if !yield(fantasy.StreamPart{
 						Type:             fantasy.StreamPartTypeToolResult,
 						ID:               contentBlock.ToolUseID,
@@ -1439,6 +1529,9 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 						continue
 					}
 					contentBlock := acc.Content[int(chunk.Index)]
+					if contentBlock.Type == "server_tool_use" {
+						continue
+					}
 					if !yield(fantasy.StreamPart{
 						Type:          fantasy.StreamPartTypeToolInputDelta,
 						ID:            contentBlock.ID,
@@ -1452,7 +1545,20 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 		}
 
 		err := stream.Err()
+		var incompleteErr error
+		if len(providerExecutedOperations) > 0 {
+			incompleteErr = incompleteProviderExecutedOperationError(
+				firstProviderExecutedOperationID(providerExecutedOperations),
+			)
+		}
 		if err == nil || errors.Is(err, io.EOF) {
+			if incompleteErr != nil {
+				yield(fantasy.StreamPart{
+					Type:  fantasy.StreamPartTypeError,
+					Error: incompleteErr,
+				})
+				return
+			}
 			yield(fantasy.StreamPart{
 				Type:         fantasy.StreamPartTypeFinish,
 				ID:           acc.ID,
@@ -1467,13 +1573,20 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 				ProviderMetadata: fantasy.ProviderMetadata{},
 			})
 			return
-		} else { //nolint: revive
+		}
+
+		if incompleteErr != nil {
 			yield(fantasy.StreamPart{
 				Type:  fantasy.StreamPartTypeError,
-				Error: toProviderErr(err),
+				Error: fmt.Errorf("%w: %w", incompleteErr, toProviderErr(err)),
 			})
 			return
 		}
+
+		yield(fantasy.StreamPart{
+			Type:  fantasy.StreamPartTypeError,
+			Error: toProviderErr(err),
+		})
 	}, nil
 }
 

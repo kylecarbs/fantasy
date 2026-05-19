@@ -1574,7 +1574,8 @@ func TestComputerUseToolJSON(t *testing.T) {
 		}
 		_, err := computerUseToolJSON(pdt)
 		require.Error(t, err)
-			require.Contains(t, err.Error(), "tool_version arg is missing")	})
+		require.Contains(t, err.Error(), "tool_version arg is missing")
+	})
 
 	t.Run("returns error for unsupported version", func(t *testing.T) {
 		t.Parallel()
@@ -2287,4 +2288,210 @@ func TestStream_ComputerUseTool(t *testing.T) {
 	for i, h := range betaHeaders {
 		require.Contains(t, h, "computer-use-2025-01-24", "request %d", i)
 	}
+}
+
+func TestGenerate_WebSearchResponseRejectsUnpairedProviderOperations(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name        string
+		content     func([]any) []any
+		wantErrText string
+	}{
+		{
+			name: "missing result",
+			content: func(content []any) []any {
+				return []any{content[0]}
+			},
+			wantErrText: "ended without a matching result",
+		},
+		{
+			name: "missing server tool use",
+			content: func(content []any) []any {
+				return []any{content[1]}
+			},
+			wantErrText: "without a matching server tool use",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			response := mockAnthropicWebSearchResponse()
+			content, ok := response["content"].([]any)
+			require.True(t, ok)
+			response["content"] = tc.content(content)
+
+			server, _ := newAnthropicJSONServer(response)
+			defer server.Close()
+
+			provider, err := New(
+				WithAPIKey("test-api-key"),
+				WithBaseURL(server.URL),
+			)
+			require.NoError(t, err)
+
+			model, err := provider.LanguageModel(context.Background(), "claude-sonnet-4-20250514")
+			require.NoError(t, err)
+
+			_, err = model.Generate(context.Background(), fantasy.Call{
+				Prompt: testPrompt(),
+				Tools: []fantasy.Tool{
+					WebSearchTool(nil),
+				},
+			})
+			require.ErrorContains(t, err, tc.wantErrText)
+		})
+	}
+}
+
+func TestStream_WebSearchResponseRejectsUnpairedProviderOperations(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name        string
+		chunks      []string
+		wantErrText string
+	}{
+		{
+			name: "missing result",
+			chunks: []string{
+				"event: message_start\n",
+				`data: {"type":"message_start","message":{"id":"msg_01WebSearch","type":"message","role":"assistant","model":"claude-sonnet-4-20250514","content":[],"stop_reason":null,"usage":{"input_tokens":100,"output_tokens":0}}}` + "\n\n",
+				"event: content_block_start\n",
+				`data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_01","name":"web_search","input":{}}}` + "\n\n",
+				"event: content_block_stop\n",
+				`data: {"type":"content_block_stop","index":0}` + "\n\n",
+				"event: message_stop\n",
+				`data: {"type":"message_stop"}` + "\n\n",
+			},
+			wantErrText: "ended without a matching result",
+		},
+		{
+			name: "missing server tool use",
+			chunks: []string{
+				"event: message_start\n",
+				`data: {"type":"message_start","message":{"id":"msg_01WebSearch","type":"message","role":"assistant","model":"claude-sonnet-4-20250514","content":[],"stop_reason":null,"usage":{"input_tokens":100,"output_tokens":0}}}` + "\n\n",
+				"event: content_block_start\n",
+				`data: {"type":"content_block_start","index":0,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_01","content":[]}}` + "\n\n",
+				"event: content_block_stop\n",
+				`data: {"type":"content_block_stop","index":0}` + "\n\n",
+				"event: message_stop\n",
+				`data: {"type":"message_stop"}` + "\n\n",
+			},
+			wantErrText: "without a matching server tool use",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			parts := collectAnthropicStreamPartsFromChunks(t, tc.chunks)
+
+			var providerToolEvents []fantasy.StreamPart
+			var errorParts []fantasy.StreamPart
+			for _, part := range parts {
+				switch part.Type {
+				case fantasy.StreamPartTypeToolInputStart,
+					fantasy.StreamPartTypeToolInputEnd,
+					fantasy.StreamPartTypeToolCall,
+					fantasy.StreamPartTypeToolResult:
+					if part.ProviderExecuted {
+						providerToolEvents = append(providerToolEvents, part)
+					}
+				case fantasy.StreamPartTypeError:
+					errorParts = append(errorParts, part)
+				}
+			}
+
+			require.Empty(t, providerToolEvents)
+			require.Len(t, errorParts, 1)
+			require.ErrorContains(t, errorParts[0].Error, tc.wantErrText)
+		})
+	}
+}
+
+func TestStream_WebSearchResponseEmitsProviderOperationAdjacently(t *testing.T) {
+	t.Parallel()
+
+	webSearchResultContent, _ := json.Marshal([]any{
+		map[string]any{
+			"type":              "web_search_result",
+			"url":               "https://example.com/ai-news",
+			"title":             "Latest AI News",
+			"encrypted_content": "encrypted_abc123",
+		},
+	})
+	parts := collectAnthropicStreamPartsFromChunks(t, []string{
+		"event: message_start\n",
+		`data: {"type":"message_start","message":{"id":"msg_01WebSearch","type":"message","role":"assistant","model":"claude-sonnet-4-20250514","content":[],"stop_reason":null,"usage":{"input_tokens":100,"output_tokens":0}}}` + "\n\n",
+		"event: content_block_start\n",
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_01","name":"web_search","input":{}}}` + "\n\n",
+		"event: content_block_stop\n",
+		`data: {"type":"content_block_stop","index":0}` + "\n\n",
+		"event: content_block_start\n",
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_01","content":` + string(webSearchResultContent) + `}}` + "\n\n",
+		"event: content_block_stop\n",
+		`data: {"type":"content_block_stop","index":1}` + "\n\n",
+		"event: message_stop\n",
+		`data: {"type":"message_stop"}` + "\n\n",
+	})
+
+	startIndex := -1
+	endIndex := -1
+	callIndex := -1
+	resultIndex := -1
+	for i, part := range parts {
+		if !part.ProviderExecuted {
+			continue
+		}
+		switch part.Type {
+		case fantasy.StreamPartTypeToolInputStart:
+			startIndex = i
+		case fantasy.StreamPartTypeToolInputEnd:
+			endIndex = i
+		case fantasy.StreamPartTypeToolCall:
+			callIndex = i
+		case fantasy.StreamPartTypeToolResult:
+			resultIndex = i
+		}
+	}
+	require.NotEqual(t, -1, startIndex)
+	require.Equal(t, startIndex+1, endIndex)
+	require.Equal(t, endIndex+1, callIndex)
+	require.Equal(t, callIndex+1, resultIndex)
+}
+
+func collectAnthropicStreamPartsFromChunks(t *testing.T, chunks []string) []fantasy.StreamPart {
+	t.Helper()
+
+	server, calls := newAnthropicStreamingServer(chunks)
+	defer server.Close()
+
+	provider, err := New(
+		WithAPIKey("test-api-key"),
+		WithBaseURL(server.URL),
+	)
+	require.NoError(t, err)
+
+	model, err := provider.LanguageModel(context.Background(), "claude-sonnet-4-20250514")
+	require.NoError(t, err)
+
+	stream, err := model.Stream(context.Background(), fantasy.Call{
+		Prompt: testPrompt(),
+		Tools: []fantasy.Tool{
+			WebSearchTool(nil),
+		},
+	})
+	require.NoError(t, err)
+
+	var parts []fantasy.StreamPart
+	stream(func(part fantasy.StreamPart) bool {
+		parts = append(parts, part)
+		return true
+	})
+	_ = awaitAnthropicCall(t, calls)
+	return parts
 }
