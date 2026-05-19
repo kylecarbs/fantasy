@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -947,7 +948,7 @@ func TestDoGenerate(t *testing.T) {
 		result, err := model.Generate(context.Background(), fantasy.Call{
 			Prompt: testPrompt,
 			ProviderOptions: NewProviderOptions(&ProviderOptions{
-				LogProbs: new(true),
+				LogProbs: fantasy.Opt(true),
 			}),
 		})
 
@@ -1068,8 +1069,8 @@ func TestDoGenerate(t *testing.T) {
 				LogitBias: map[string]int64{
 					"50256": -100,
 				},
-				ParallelToolCalls: new(false),
-				User:              new("test-user-id"),
+				ParallelToolCalls: fantasy.Opt(false),
+				User:              fantasy.Opt("test-user-id"),
 			}),
 		})
 
@@ -1109,7 +1110,7 @@ func TestDoGenerate(t *testing.T) {
 			Prompt: testPrompt,
 			ProviderOptions: NewProviderOptions(
 				&ProviderOptions{
-					ReasoningEffort: new(ReasoningEffortLow),
+					ReasoningEffort: ReasoningEffortOption(ReasoningEffortLow),
 				},
 			),
 		})
@@ -1149,7 +1150,7 @@ func TestDoGenerate(t *testing.T) {
 		_, err = model.Generate(context.Background(), fantasy.Call{
 			Prompt: testPrompt,
 			ProviderOptions: NewProviderOptions(&ProviderOptions{
-				TextVerbosity: new("low"),
+				TextVerbosity: fantasy.Opt("low"),
 			}),
 		})
 
@@ -1610,7 +1611,7 @@ func TestDoGenerate(t *testing.T) {
 		_, err = model.Generate(context.Background(), fantasy.Call{
 			Prompt: testPrompt,
 			ProviderOptions: NewProviderOptions(&ProviderOptions{
-				MaxCompletionTokens: new(int64(255)),
+				MaxCompletionTokens: fantasy.Opt(int64(255)),
 			}),
 		})
 
@@ -1694,7 +1695,7 @@ func TestDoGenerate(t *testing.T) {
 		_, err = model.Generate(context.Background(), fantasy.Call{
 			Prompt: testPrompt,
 			ProviderOptions: NewProviderOptions(&ProviderOptions{
-				Store: new(true),
+				Store: fantasy.Opt(true),
 			}),
 		})
 
@@ -1776,7 +1777,7 @@ func TestDoGenerate(t *testing.T) {
 		_, err = model.Generate(context.Background(), fantasy.Call{
 			Prompt: testPrompt,
 			ProviderOptions: NewProviderOptions(&ProviderOptions{
-				PromptCacheKey: new("test-cache-key-123"),
+				PromptCacheKey: fantasy.Opt("test-cache-key-123"),
 			}),
 		})
 
@@ -1815,7 +1816,7 @@ func TestDoGenerate(t *testing.T) {
 		_, err = model.Generate(context.Background(), fantasy.Call{
 			Prompt: testPrompt,
 			ProviderOptions: NewProviderOptions(&ProviderOptions{
-				SafetyIdentifier: new("test-safety-identifier-123"),
+				SafetyIdentifier: fantasy.Opt("test-safety-identifier-123"),
 			}),
 		})
 
@@ -1887,7 +1888,7 @@ func TestDoGenerate(t *testing.T) {
 		_, err = model.Generate(context.Background(), fantasy.Call{
 			Prompt: testPrompt,
 			ProviderOptions: NewProviderOptions(&ProviderOptions{
-				ServiceTier: new("flex"),
+				ServiceTier: fantasy.Opt("flex"),
 			}),
 		})
 
@@ -1924,7 +1925,7 @@ func TestDoGenerate(t *testing.T) {
 		result, err := model.Generate(context.Background(), fantasy.Call{
 			Prompt: testPrompt,
 			ProviderOptions: NewProviderOptions(&ProviderOptions{
-				ServiceTier: new("flex"),
+				ServiceTier: fantasy.Opt("flex"),
 			}),
 		})
 
@@ -1958,7 +1959,7 @@ func TestDoGenerate(t *testing.T) {
 		_, err = model.Generate(context.Background(), fantasy.Call{
 			Prompt: testPrompt,
 			ProviderOptions: NewProviderOptions(&ProviderOptions{
-				ServiceTier: new("priority"),
+				ServiceTier: fantasy.Opt("priority"),
 			}),
 		})
 
@@ -1995,7 +1996,7 @@ func TestDoGenerate(t *testing.T) {
 		result, err := model.Generate(context.Background(), fantasy.Call{
 			Prompt: testPrompt,
 			ProviderOptions: NewProviderOptions(&ProviderOptions{
-				ServiceTier: new("priority"),
+				ServiceTier: fantasy.Opt("priority"),
 			}),
 		})
 
@@ -2752,7 +2753,7 @@ func TestDoStream(t *testing.T) {
 		_, err = model.Stream(context.Background(), fantasy.Call{
 			Prompt: testPrompt,
 			ProviderOptions: NewProviderOptions(&ProviderOptions{
-				Store: new(true),
+				Store: fantasy.Opt(true),
 			}),
 		})
 
@@ -2842,7 +2843,7 @@ func TestDoStream(t *testing.T) {
 		_, err = model.Stream(context.Background(), fantasy.Call{
 			Prompt: testPrompt,
 			ProviderOptions: NewProviderOptions(&ProviderOptions{
-				ServiceTier: new("flex"),
+				ServiceTier: fantasy.Opt("flex"),
 			}),
 		})
 
@@ -2885,7 +2886,7 @@ func TestDoStream(t *testing.T) {
 		_, err = model.Stream(context.Background(), fantasy.Call{
 			Prompt: testPrompt,
 			ProviderOptions: NewProviderOptions(&ProviderOptions{
-				ServiceTier: new("priority"),
+				ServiceTier: fantasy.Opt("priority"),
 			}),
 		})
 
@@ -3183,7 +3184,9 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+
+		require.NoError(t, err)
 
 		require.Len(t, input, 1, "should only have user message")
 		require.Len(t, warnings, 1)
@@ -3209,7 +3212,9 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+
+		require.NoError(t, err)
 
 		require.Len(t, input, 2, "should have both user and assistant messages")
 		require.Empty(t, warnings)
@@ -3235,11 +3240,22 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 					},
 				},
 			},
+			{
+				Role: fantasy.MessageRoleTool,
+				Content: []fantasy.MessagePart{
+					fantasy.ToolResultPart{
+						ToolCallID: "call_123",
+						Output:     fantasy.ToolResultOutputContentText{Text: "sunny"},
+					},
+				},
+			},
 		}
 
-		input, warnings := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false)
 
-		require.Len(t, input, 2, "should have both user and assistant messages")
+		require.NoError(t, err)
+
+		require.Len(t, input, 3, "should have user, assistant tool call, and tool result")
 		require.Empty(t, warnings)
 	})
 
@@ -3258,7 +3274,9 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+
+		require.NoError(t, err)
 
 		require.Empty(t, input)
 		require.Len(t, warnings, 2) // One for unsupported type, one for empty message
@@ -3280,16 +3298,28 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+
+		require.NoError(t, err)
 
 		require.Len(t, input, 1)
 		require.Empty(t, warnings)
 	})
 
-	t.Run("should keep user messages with tool results", func(t *testing.T) {
+	t.Run("should keep tool messages with matching tool results", func(t *testing.T) {
 		t.Parallel()
 
 		prompt := fantasy.Prompt{
+			{
+				Role: fantasy.MessageRoleAssistant,
+				Content: []fantasy.MessagePart{
+					fantasy.ToolCallPart{
+						ToolCallID: "call_123",
+						ToolName:   "get_weather",
+						Input:      "{\"location\":\"NYC\"}",
+					},
+				},
+			},
 			{
 				Role: fantasy.MessageRoleTool,
 				Content: []fantasy.MessagePart{
@@ -3301,16 +3331,28 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false)
 
-		require.Len(t, input, 1)
+		require.NoError(t, err)
+
+		require.Len(t, input, 2)
 		require.Empty(t, warnings)
 	})
 
-	t.Run("should keep user messages with tool error results", func(t *testing.T) {
+	t.Run("should keep tool messages with matching tool error results", func(t *testing.T) {
 		t.Parallel()
 
 		prompt := fantasy.Prompt{
+			{
+				Role: fantasy.MessageRoleAssistant,
+				Content: []fantasy.MessagePart{
+					fantasy.ToolCallPart{
+						ToolCallID: "call_456",
+						ToolName:   "get_weather",
+						Input:      "{\"location\":\"NYC\"}",
+					},
+				},
+			},
 			{
 				Role: fantasy.MessageRoleTool,
 				Content: []fantasy.MessagePart{
@@ -3322,11 +3364,14 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false)
 
-		require.Len(t, input, 1)
+		require.NoError(t, err)
+
+		require.Len(t, input, 2)
 		require.Empty(t, warnings)
 	})
+
 }
 
 func TestParseContextTooLargeError(t *testing.T) {
@@ -3599,6 +3644,21 @@ func newResponsesProvider(t *testing.T, serverURL string) fantasy.LanguageModel 
 	return model
 }
 
+func responsesSSEEvent(event, data string) string {
+	return "event: " + event + "\ndata: " + data + "\n\n"
+}
+
+func collectObjectStreamParts(stream fantasy.ObjectStreamResponse) []fantasy.ObjectStreamPart {
+	var parts []fantasy.ObjectStreamPart
+	for part := range stream {
+		parts = append(parts, part)
+		if part.Type == fantasy.ObjectStreamPartTypeError || part.Type == fantasy.ObjectStreamPartTypeFinish {
+			break
+		}
+	}
+	return parts
+}
+
 func TestResponsesGenerate_WebSearchResponse(t *testing.T) {
 	t.Parallel()
 
@@ -3686,7 +3746,7 @@ func TestResponsesGenerate_StoreOption(t *testing.T) {
 		Prompt: testPrompt,
 		ProviderOptions: fantasy.ProviderOptions{
 			Name: &ResponsesProviderOptions{
-				Store: new(true),
+				Store: fantasy.Opt(true),
 			},
 		},
 	})
@@ -3710,8 +3770,8 @@ func TestResponsesGenerate_PreviousResponseIDOption(t *testing.T) {
 		Prompt: testPrompt,
 		ProviderOptions: fantasy.ProviderOptions{
 			Name: &ResponsesProviderOptions{
-				PreviousResponseID: new("resp_prev_123"),
-				Store:              new(true),
+				PreviousResponseID: fantasy.Opt("resp_prev_123"),
+				Store:              fantasy.Opt(true),
 			},
 		},
 	})
@@ -3758,7 +3818,7 @@ func TestResponsesGenerate_StateChainingAcrossTurns(t *testing.T) {
 	first, err := model.Generate(context.Background(), fantasy.Call{
 		Prompt: testPrompt,
 		ProviderOptions: fantasy.ProviderOptions{
-			Name: &ResponsesProviderOptions{Store: new(true)},
+			Name: &ResponsesProviderOptions{Store: fantasy.Opt(true)},
 		},
 	})
 	require.NoError(t, err)
@@ -3799,7 +3859,7 @@ func TestResponsesGenerate_StateChainingAcrossTurns(t *testing.T) {
 		},
 		ProviderOptions: fantasy.ProviderOptions{
 			Name: &ResponsesProviderOptions{
-				Store:              new(true),
+				Store:              fantasy.Opt(true),
 				PreviousResponseID: &meta.ResponseID,
 			},
 		},
@@ -3955,7 +4015,9 @@ func TestResponsesToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 	t.Run("store false skips item reference", func(t *testing.T) {
 		t.Parallel()
 
-		input, warnings := toResponsesPrompt(prompt, "system instructions", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system instructions", false)
+
+		require.NoError(t, err)
 
 		require.Empty(t, warnings)
 		require.Len(t, input, 2,
@@ -3964,16 +4026,18 @@ func TestResponsesToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 		require.Nil(t, input[1].OfItemReference)
 	})
 
-	t.Run("store true uses item reference", func(t *testing.T) {
+	t.Run("store true skips item reference", func(t *testing.T) {
 		t.Parallel()
 
-		input, warnings := toResponsesPrompt(prompt, "system instructions", true)
+		input, warnings, err := toResponsesPrompt(prompt, "system instructions", true)
+
+		require.NoError(t, err)
 
 		require.Empty(t, warnings)
-		require.Len(t, input, 3,
-			"expected user + item_reference + assistant text when store=true")
-		require.NotNil(t, input[1].OfItemReference)
-		require.Equal(t, "ws_01", input[1].OfItemReference.ID)
+		require.Len(t, input, 2,
+			"expected user + assistant text when store=true")
+		require.Nil(t, input[0].OfItemReference)
+		require.Nil(t, input[1].OfItemReference)
 	})
 }
 
@@ -4016,27 +4080,80 @@ func TestResponsesToPrompt_ReasoningWithStore(t *testing.T) {
 		},
 	}
 
-	t.Run("store true skips reasoning", func(t *testing.T) {
+	t.Run("store true emits item_reference for reasoning", func(t *testing.T) {
 		t.Parallel()
 
-		input, warnings := toResponsesPrompt(prompt, "system", true)
+		input, warnings, err := toResponsesPrompt(prompt, "system", true)
+
+		require.NoError(t, err)
 		require.Empty(t, warnings)
 
-		// With store=true: user, assistant text (reasoning
-		// skipped), follow-up user.
-		require.Len(t, input, 3)
+		// With store=true the reasoning item is replayed as an
+		// item_reference so any following provider-executed item
+		// pairs correctly. Order: user, item_reference(rs_*),
+		// assistant text, user.
+		require.Len(t, input, 4)
 
-		// Verify no reasoning item leaked through.
 		for _, item := range input {
 			require.Nil(t, item.OfReasoning,
-				"reasoning items must not appear when store=true")
+				"reasoning items must not appear inline when store=true")
+		}
+
+		require.NotNil(t, input[1].OfItemReference,
+			"expected reasoning replayed via item_reference")
+		require.Equal(t, reasoningItemID, input[1].OfItemReference.ID)
+	})
+
+	t.Run("store true skips reasoning when item id missing", func(t *testing.T) {
+		t.Parallel()
+
+		noIDPrompt := fantasy.Prompt{
+			{
+				Role: fantasy.MessageRoleUser,
+				Content: []fantasy.MessagePart{
+					fantasy.TextPart{Text: "What is 2+2?"},
+				},
+			},
+			{
+				Role: fantasy.MessageRoleAssistant,
+				Content: []fantasy.MessagePart{
+					fantasy.ReasoningPart{
+						Text: "thinking",
+						ProviderOptions: fantasy.ProviderOptions{
+							Name: &ResponsesReasoningMetadata{Summary: []string{}},
+						},
+					},
+					fantasy.TextPart{Text: "4"},
+				},
+			},
+			{
+				Role: fantasy.MessageRoleUser,
+				Content: []fantasy.MessagePart{
+					fantasy.TextPart{Text: "And 3+3?"},
+				},
+			},
+		}
+
+		input, warnings, err := toResponsesPrompt(noIDPrompt, "system", true)
+
+		require.NoError(t, err)
+		require.Empty(t, warnings)
+
+		// Without an ItemID we cannot reference the reasoning
+		// item. Order: user, assistant text, user.
+		require.Len(t, input, 3)
+		for _, item := range input {
+			require.Nil(t, item.OfReasoning)
+			require.Nil(t, item.OfItemReference)
 		}
 	})
 
 	t.Run("store false skips reasoning", func(t *testing.T) {
 		t.Parallel()
 
-		input, warnings := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+
+		require.NoError(t, err)
 		require.Empty(t, warnings)
 
 		// With store=false: user, assistant text, follow-up user.
@@ -4045,8 +4162,384 @@ func TestResponsesToPrompt_ReasoningWithStore(t *testing.T) {
 		for _, item := range input {
 			require.Nil(t, item.OfReasoning,
 				"reasoning items must not appear when store=false")
+			require.Nil(t, item.OfItemReference,
+				"reasoning item_reference must not appear when store=false")
 		}
 	})
+}
+
+func TestResponsesToPrompt_ReasoningWithWebSearchCombined(t *testing.T) {
+	t.Parallel()
+
+	reasoningItemID := "rs_002"
+	webSearchItemID := "ws_002"
+
+	prompt := fantasy.Prompt{
+		{
+			Role: fantasy.MessageRoleUser,
+			Content: []fantasy.MessagePart{
+				fantasy.TextPart{Text: "What is the weather in San Francisco?"},
+			},
+		},
+		{
+			Role: fantasy.MessageRoleAssistant,
+			Content: []fantasy.MessagePart{
+				fantasy.ReasoningPart{
+					Text: "I should look this up.",
+					ProviderOptions: fantasy.ProviderOptions{
+						Name: &ResponsesReasoningMetadata{
+							ItemID:  reasoningItemID,
+							Summary: []string{},
+						},
+					},
+				},
+				fantasy.ToolCallPart{
+					ToolCallID:       webSearchItemID,
+					ToolName:         "web_search",
+					ProviderExecuted: true,
+				},
+				fantasy.ToolResultPart{
+					ToolCallID:       webSearchItemID,
+					ProviderExecuted: true,
+				},
+				fantasy.TextPart{Text: "Sunny."},
+			},
+		},
+		{
+			Role: fantasy.MessageRoleUser,
+			Content: []fantasy.MessagePart{
+				fantasy.TextPart{Text: "And Tokyo?"},
+			},
+		},
+	}
+
+	t.Run("store true pairs reasoning and web search", func(t *testing.T) {
+		t.Parallel()
+
+		input, warnings, err := toResponsesPrompt(prompt, "system", true)
+
+		require.NoError(t, err)
+		require.Empty(t, warnings)
+
+		// Order: user, item_reference(rs_*), item_reference(ws_*),
+		// assistant text, user.
+		require.Len(t, input, 5)
+
+		require.NotNil(t, input[1].OfItemReference)
+		require.Equal(t, reasoningItemID, input[1].OfItemReference.ID,
+			"reasoning item_reference must precede web_search item_reference")
+
+		require.NotNil(t, input[2].OfItemReference)
+		require.Equal(t, webSearchItemID, input[2].OfItemReference.ID)
+	})
+
+	t.Run("store false skips both reasoning and provider tool call", func(t *testing.T) {
+		t.Parallel()
+
+		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+
+		require.NoError(t, err)
+		require.Empty(t, warnings)
+
+		// Both reasoning and the provider-executed web_search_call
+		// are skipped under store=false. user, assistant text, user.
+		require.Len(t, input, 3)
+		for _, item := range input {
+			require.Nil(t, item.OfItemReference)
+			require.Nil(t, item.OfReasoning)
+		}
+	})
+}
+
+func TestResponsesToPrompt_WebSearchRequiresReasoningReference(t *testing.T) {
+	t.Parallel()
+
+	input, warnings, err := toResponsesPrompt(fantasy.Prompt{
+		{
+			Role: fantasy.MessageRoleAssistant,
+			Content: []fantasy.MessagePart{
+				fantasy.ReasoningPart{
+					Text: "I should search.",
+					ProviderOptions: fantasy.ProviderOptions{
+						Name: &ResponsesReasoningMetadata{Summary: []string{}},
+					},
+				},
+				fantasy.ToolCallPart{
+					ToolCallID:       "ws_missing_reasoning",
+					ToolName:         "web_search",
+					ProviderExecuted: true,
+				},
+				fantasy.TextPart{Text: "Search completed."},
+			},
+		},
+	}, "system", true)
+
+	require.NoError(t, err)
+	require.Empty(t, warnings)
+	require.Len(t, input, 1)
+	require.NotNil(t, input[0].OfMessage)
+}
+
+func TestResponsesToPrompt_ReasoningWithFunctionCallCombined(t *testing.T) {
+	t.Parallel()
+
+	reasoningItemID := "rs_003"
+	functionCallID := "call_003"
+
+	prompt := fantasy.Prompt{
+		{
+			Role: fantasy.MessageRoleUser,
+			Content: []fantasy.MessagePart{
+				fantasy.TextPart{Text: "compute 1+1"},
+			},
+		},
+		{
+			Role: fantasy.MessageRoleAssistant,
+			Content: []fantasy.MessagePart{
+				fantasy.ReasoningPart{
+					Text: "I'll call add.",
+					ProviderOptions: fantasy.ProviderOptions{
+						Name: &ResponsesReasoningMetadata{
+							ItemID:  reasoningItemID,
+							Summary: []string{},
+						},
+					},
+				},
+				fantasy.ToolCallPart{
+					ToolCallID: functionCallID,
+					ToolName:   "add",
+					Input:      `{"a":1,"b":1}`,
+				},
+			},
+		},
+		{
+			Role: fantasy.MessageRoleTool,
+			Content: []fantasy.MessagePart{
+				fantasy.ToolResultPart{
+					ToolCallID: functionCallID,
+					Output:     fantasy.ToolResultOutputContentText{Text: "2"},
+				},
+			},
+		},
+		{
+			Role: fantasy.MessageRoleUser,
+			Content: []fantasy.MessagePart{
+				fantasy.TextPart{Text: "thanks"},
+			},
+		},
+	}
+
+	input, warnings, err := toResponsesPrompt(prompt, "system", true)
+
+	require.NoError(t, err)
+	require.Empty(t, warnings)
+
+	// Order: user, item_reference(rs_003), function_call(call_003),
+	// function_call_output(call_003), user.
+	require.Len(t, input, 5)
+
+	require.NotNil(t, input[1].OfItemReference)
+	require.Equal(t, reasoningItemID, input[1].OfItemReference.ID,
+		"reasoning item_reference must precede function_call")
+
+	require.NotNil(t, input[2].OfFunctionCall)
+	require.Equal(t, functionCallID, input[2].OfFunctionCall.CallID)
+
+	require.NotNil(t, input[3].OfFunctionCallOutput)
+	require.Equal(t, functionCallID, input[3].OfFunctionCallOutput.CallID)
+}
+
+func TestResponsesStream_RequiresTerminalEventBeforeFinish(t *testing.T) {
+	t.Parallel()
+
+	textChunks := []string{
+		responsesSSEEvent("response.output_item.added", `{"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_01","role":"assistant","status":"in_progress","content":[]}}`),
+		responsesSSEEvent("response.output_text.delta", `{"type":"response.output_text.delta","output_index":0,"content_index":0,"item_id":"msg_01","delta":"hello"}`),
+		responsesSSEEvent("response.output_item.done", `{"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":"msg_01","role":"assistant","status":"completed","content":[{"type":"output_text","text":"hello","annotations":[]}]}}`),
+	}
+	completedEvent := responsesSSEEvent("response.completed", `{"type":"response.completed","response":{"id":"resp_01","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`)
+	incompleteEvent := responsesSSEEvent("response.incomplete", `{"type":"response.incomplete","response":{"id":"resp_02","status":"incomplete","output":[],"incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`)
+	failedEvent := responsesSSEEvent("response.failed", `{"type":"response.failed","response":{"id":"resp_03","status":"failed","error":{"code":"server_error","message":"boom"},"output":[]}}`)
+	errorEvent := responsesSSEEvent("error", `{"type":"error","message":"stream down","code":"server_error"}`)
+
+	tests := []struct {
+		name             string
+		chunks           []string
+		wantFinishReason fantasy.FinishReason
+		wantEOF          bool
+		wantError        string
+	}{
+		{
+			name:             "completed stream finishes",
+			chunks:           append(append([]string{}, textChunks...), completedEvent),
+			wantFinishReason: fantasy.FinishReasonStop,
+		},
+		{
+			name:             "incomplete stream is terminal",
+			chunks:           append(append([]string{}, textChunks...), incompleteEvent),
+			wantFinishReason: fantasy.FinishReasonLength,
+		},
+		{
+			name:    "eof before terminal event returns EOF error",
+			chunks:  textChunks,
+			wantEOF: true,
+		},
+		{
+			name:    "empty stream returns EOF error",
+			wantEOF: true,
+		},
+		{
+			name:      "failed event returns provider error",
+			chunks:    []string{failedEvent},
+			wantError: "boom",
+		},
+		{
+			name:      "error event keeps existing error path",
+			chunks:    []string{errorEvent},
+			wantError: "stream down",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			sms := newStreamingMockServer()
+			defer sms.close()
+			sms.chunks = tt.chunks
+
+			model := newResponsesProvider(t, sms.server.URL)
+
+			stream, err := model.Stream(context.Background(), fantasy.Call{
+				Prompt: testPrompt,
+			})
+			require.NoError(t, err)
+
+			parts, err := collectStreamParts(stream)
+			require.NoError(t, err)
+
+			var finishes []fantasy.StreamPart
+			var errors []fantasy.StreamPart
+			for _, part := range parts {
+				switch part.Type {
+				case fantasy.StreamPartTypeFinish:
+					finishes = append(finishes, part)
+				case fantasy.StreamPartTypeError:
+					errors = append(errors, part)
+				}
+			}
+
+			if tt.wantFinishReason != "" {
+				require.Len(t, finishes, 1)
+				require.Empty(t, errors)
+				require.Equal(t, tt.wantFinishReason, finishes[0].FinishReason)
+				return
+			}
+
+			require.Empty(t, finishes)
+			require.Len(t, errors, 1)
+			require.Error(t, errors[0].Error)
+			if tt.wantEOF {
+				require.ErrorIs(t, errors[0].Error, io.EOF)
+				require.Contains(t, errors[0].Error.Error(), "terminal event")
+			} else {
+				require.NotContains(t, errors[0].Error.Error(), "terminal event")
+				require.Contains(t, errors[0].Error.Error(), tt.wantError)
+			}
+		})
+	}
+}
+
+func TestResponsesStreamObject_RequiresTerminalEventBeforeFinish(t *testing.T) {
+	t.Parallel()
+
+	objectChunks := []string{
+		responsesSSEEvent("response.output_text.delta", `{"type":"response.output_text.delta","output_index":0,"content_index":0,"item_id":"msg_01","delta":"{\"name\":\"Alice\"}"}`),
+	}
+	completedEvent := responsesSSEEvent("response.completed", `{"type":"response.completed","response":{"id":"resp_01","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`)
+	failedEvent := responsesSSEEvent("response.failed", `{"type":"response.failed","response":{"id":"resp_02","status":"failed","error":{"code":"server_error","message":"boom"},"output":[]}}`)
+	errorEvent := responsesSSEEvent("error", `{"type":"error","message":"stream down","code":"server_error"}`)
+
+	tests := []struct {
+		name       string
+		chunks     []string
+		wantFinish bool
+		wantError  string
+	}{
+		{
+			name:       "completed stream finishes",
+			chunks:     append(append([]string{}, objectChunks...), completedEvent),
+			wantFinish: true,
+		},
+		{
+			name:   "eof before terminal event returns EOF error",
+			chunks: objectChunks,
+		},
+		{
+			name:      "failed event returns provider error",
+			chunks:    []string{failedEvent},
+			wantError: "boom",
+		},
+		{
+			name:      "error event keeps existing error path",
+			chunks:    []string{errorEvent},
+			wantError: "stream down",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			sms := newStreamingMockServer()
+			defer sms.close()
+			sms.chunks = tt.chunks
+
+			model := newResponsesProvider(t, sms.server.URL)
+			stream, err := model.StreamObject(context.Background(), fantasy.ObjectCall{
+				Prompt: fantasy.Prompt{fantasy.NewUserMessage("Generate a person.")},
+				Schema: fantasy.Schema{
+					Type: "object",
+					Properties: map[string]*fantasy.Schema{
+						"name": {Type: "string"},
+					},
+					Required: []string{"name"},
+				},
+				SchemaName: "Person",
+			})
+			require.NoError(t, err)
+
+			parts := collectObjectStreamParts(stream)
+
+			var finishes []fantasy.ObjectStreamPart
+			var errors []fantasy.ObjectStreamPart
+			for _, part := range parts {
+				switch part.Type {
+				case fantasy.ObjectStreamPartTypeFinish:
+					finishes = append(finishes, part)
+				case fantasy.ObjectStreamPartTypeError:
+					errors = append(errors, part)
+				}
+			}
+
+			if tt.wantFinish {
+				require.Len(t, finishes, 1)
+				require.Empty(t, errors)
+				require.Equal(t, fantasy.FinishReasonStop, finishes[0].FinishReason)
+				return
+			}
+
+			require.Empty(t, finishes)
+			require.Len(t, errors, 1)
+			if tt.wantError != "" {
+				require.NotContains(t, errors[0].Error.Error(), "terminal event")
+				require.Contains(t, errors[0].Error.Error(), tt.wantError)
+				return
+			}
+			require.ErrorIs(t, errors[0].Error, io.EOF)
+			require.Contains(t, errors[0].Error.Error(), "terminal event")
+		})
+	}
 }
 
 func TestResponsesStream_WebSearchResponse(t *testing.T) {
@@ -4164,7 +4657,7 @@ func TestResponsesStream_StoreOption(t *testing.T) {
 		Prompt: testPrompt,
 		ProviderOptions: fantasy.ProviderOptions{
 			Name: &ResponsesProviderOptions{
-				Store: new(true),
+				Store: fantasy.Opt(true),
 			},
 		},
 	})
@@ -4197,8 +4690,8 @@ func TestResponsesStream_PreviousResponseIDOption(t *testing.T) {
 		Prompt: testPrompt,
 		ProviderOptions: fantasy.ProviderOptions{
 			Name: &ResponsesProviderOptions{
-				PreviousResponseID: new("resp_prev_456"),
-				Store:              new(true),
+				PreviousResponseID: fantasy.Opt("resp_prev_456"),
+				Store:              fantasy.Opt(true),
 			},
 		},
 	})
@@ -4211,4 +4704,223 @@ func TestResponsesStream_PreviousResponseIDOption(t *testing.T) {
 	require.Equal(t, "POST", sms.calls[0].method)
 	require.Equal(t, "/responses", sms.calls[0].path)
 	require.Equal(t, "resp_prev_456", sms.calls[0].body["previous_response_id"])
+}
+
+func TestComputerUseGenerateRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer()
+	defer server.close()
+
+	// Step 0: model returns a computer_call.
+	server.response = map[string]any{
+		"id":     "resp_01",
+		"object": "response",
+		"model":  "gpt-4.1",
+		"output": []any{
+			map[string]any{
+				"type":    "computer_call",
+				"id":      "cu_01",
+				"call_id": "call_01",
+				"actions": []any{
+					map[string]any{
+						"type": "screenshot",
+					},
+				},
+				"status": "completed",
+			},
+		},
+		"status": "completed",
+		"usage": map[string]any{
+			"input_tokens":  10,
+			"output_tokens": 5,
+			"total_tokens":  15,
+		},
+	}
+
+	model := newResponsesProvider(t, server.server.URL)
+
+	resp, err := model.Generate(context.Background(), fantasy.Call{
+		Prompt: testPrompt,
+		Tools:  []fantasy.Tool{NewComputerUseTool(nil)},
+	})
+	require.NoError(t, err)
+	require.Equal(t, fantasy.FinishReasonToolCalls, resp.FinishReason)
+
+	// Extract the computer tool call.
+	var toolCall fantasy.ToolCallContent
+	for _, c := range resp.Content {
+		if tc, ok := c.(fantasy.ToolCallContent); ok && tc.ToolName == "computer" {
+			toolCall = tc
+			break
+		}
+	}
+	require.NotEmpty(t, toolCall.ToolCallID)
+
+	// Verify ComputerUseMetadata is present.
+	metaVal, ok := toolCall.ProviderMetadata[Name]
+	require.True(t, ok, "expected ComputerUseMetadata")
+	cuMeta, ok := metaVal.(*ComputerUseMetadata)
+	require.True(t, ok)
+	require.NotEmpty(t, cuMeta.RawJSON)
+
+	// Step 1: model returns text.
+	server.response = map[string]any{
+		"id":     "resp_02",
+		"object": "response",
+		"model":  "gpt-4.1",
+		"output": []any{
+			map[string]any{
+				"type":   "message",
+				"id":     "msg_01",
+				"role":   "assistant",
+				"status": "completed",
+				"content": []any{
+					map[string]any{
+						"type": "output_text",
+						"text": "Done!",
+					},
+				},
+			},
+		},
+		"status": "completed",
+		"usage": map[string]any{
+			"input_tokens":  20,
+			"output_tokens": 10,
+			"total_tokens":  30,
+		},
+	}
+
+	// Build prompt for second call with the computer_call + screenshot.
+	screenshotData := base64.StdEncoding.EncodeToString([]byte{0x89, 0x50, 0x4E, 0x47})
+	prompt2 := fantasy.Prompt{
+		{
+			Role: fantasy.MessageRoleUser,
+			Content: []fantasy.MessagePart{
+				fantasy.TextPart{Text: "Hello"},
+			},
+		},
+		{
+			Role: fantasy.MessageRoleAssistant,
+			Content: []fantasy.MessagePart{
+				fantasy.ToolCallPart{
+					ToolCallID: toolCall.ToolCallID,
+					ToolName:   "computer",
+					Input:      toolCall.Input,
+					ProviderOptions: fantasy.ProviderOptions{
+						Name: &ComputerUseMetadata{RawJSON: cuMeta.RawJSON},
+					},
+				},
+			},
+		},
+		{
+			Role: fantasy.MessageRoleTool,
+			Content: []fantasy.MessagePart{
+				fantasy.ToolResultPart{
+					ToolCallID: toolCall.ToolCallID,
+					Output: fantasy.ToolResultOutputContentMedia{
+						Data:      screenshotData,
+						MediaType: "image/png",
+					},
+				},
+			},
+		},
+	}
+
+	resp2, err := model.Generate(context.Background(), fantasy.Call{
+		Prompt: prompt2,
+		Tools:  []fantasy.Tool{NewComputerUseTool(nil)},
+	})
+	require.NoError(t, err)
+	require.Len(t, resp2.Content, 1)
+
+	// Inspect the second request body.
+	require.Len(t, server.calls, 2)
+	secondBody := server.calls[1].body
+	input, ok := secondBody["input"].([]any)
+	require.True(t, ok)
+
+	// Find computer_call and computer_call_output items.
+	var foundComputerCall, foundComputerCallOutput bool
+	for _, item := range input {
+		itemMap, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch itemMap["type"] {
+		case "computer_call":
+			foundComputerCall = true
+			require.Equal(t, "call_01", itemMap["call_id"])
+		case "computer_call_output":
+			foundComputerCallOutput = true
+			require.Equal(t, toolCall.ToolCallID, itemMap["call_id"])
+			// Verify the output contains the screenshot.
+			output, ok := itemMap["output"].(map[string]any)
+			require.True(t, ok)
+			imageURL, ok := output["image_url"].(string)
+			require.True(t, ok)
+			require.True(t, strings.HasPrefix(imageURL, "data:image/png;base64,"),
+				"image_url should be a data URI, got: %s", imageURL)
+		}
+	}
+	require.True(t, foundComputerCall, "expected computer_call in input")
+	require.True(t, foundComputerCallOutput, "expected computer_call_output in input")
+}
+
+func TestComputerUseGenerateRoundTrip_NonImageResult(t *testing.T) {
+	t.Parallel()
+
+	// Build a prompt where the tool result is text, not image.
+	rawJSON := `{"type":"computer_call","call_id":"call_01","actions":[{"type":"screenshot"}],"id":"cu_01","status":"completed"}`
+	prompt := fantasy.Prompt{
+		{
+			Role: fantasy.MessageRoleUser,
+			Content: []fantasy.MessagePart{
+				fantasy.TextPart{Text: "Hello"},
+			},
+		},
+		{
+			Role: fantasy.MessageRoleAssistant,
+			Content: []fantasy.MessagePart{
+				fantasy.ToolCallPart{
+					ToolCallID: "call_01",
+					ToolName:   "computer",
+					Input:      `{"call_id":"call_01","actions":[{"type":"screenshot"}]}`,
+					ProviderOptions: fantasy.ProviderOptions{
+						Name: &ComputerUseMetadata{RawJSON: rawJSON},
+					},
+				},
+			},
+		},
+		{
+			Role: fantasy.MessageRoleTool,
+			Content: []fantasy.MessagePart{
+				fantasy.ToolResultPart{
+					ToolCallID: "call_01",
+					Output: fantasy.ToolResultOutputContentText{
+						Text: "some text result",
+					},
+				},
+			},
+		},
+	}
+
+	input, warnings, err := toResponsesPrompt(prompt, "system", false)
+	require.NoError(t, err)
+
+	// Should warn about non-image result.
+	var foundWarning bool
+	for _, w := range warnings {
+		if strings.Contains(w.Message, "computer_call_output requires image result") {
+			foundWarning = true
+			break
+		}
+	}
+	require.True(t, foundWarning, "expected warning about non-image result, got: %v", warnings)
+
+	// No computer_call_output should be in the input.
+	for _, item := range input {
+		require.Nil(t, item.OfComputerCallOutput,
+			"should not have computer_call_output for non-image result")
+	}
 }

@@ -19,6 +19,10 @@ const (
 	EffortMedium Effort = "medium"
 	// EffortHigh represents high output effort.
 	EffortHigh Effort = "high"
+	// EffortXHigh represents extra-high output effort.
+	// It sits between EffortHigh and EffortMax and was introduced with
+	// Claude Opus 4.7.
+	EffortXHigh Effort = "xhigh"
 	// EffortMax represents maximum output effort.
 	EffortMax Effort = "max"
 )
@@ -165,10 +169,14 @@ type WebSearchResultItem struct {
 }
 
 // WebSearchResultMetadata stores web search results from Anthropic's
-// server-executed web_search tool. The structured data (especially
-// EncryptedContent) must be preserved for multi-turn conversations.
+// server-executed web_search tool. The structured data, especially
+// EncryptedContent and error codes, must be preserved for multi-turn
+// conversations.
 type WebSearchResultMetadata struct {
-	Results []WebSearchResultItem `json:"results"`
+	Results []WebSearchResultItem `json:"results,omitempty"`
+	// ErrorCode is the Anthropic web_search_tool_result_error.error_code.
+	// At most one of Results or ErrorCode should be non-empty.
+	ErrorCode string `json:"error_code,omitempty"`
 }
 
 // Options implements the ProviderOptions interface.

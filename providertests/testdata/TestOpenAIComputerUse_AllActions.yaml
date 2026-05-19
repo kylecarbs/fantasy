@@ -1,0 +1,486 @@
+---
+version: 2
+interactions:
+- id: 0
+  request:
+    proto: HTTP/1.1
+    proto_major: 1
+    proto_minor: 1
+    content_length: 989
+    host: ""
+    body: '{"max_output_tokens":16000,"store":false,"input":[{"content":"You control a computer. The user will ask you to perform specific actions. Execute exactly the actions requested. Each computer_call response may contain multiple actions in the actions array. Batch as many as possible into each call. When you have executed all requested actions, reply with the word DONE.","role":"developer"},{"content":[{"text":"Execute every one of these computer actions. Batch them into as few calls as possible.\n\n1. screenshot\n2. click at x=100, y=200 with left button\n3. double_click at x=150, y=250\n4. type the text \"hello world\"\n5. keypress the keys [\"ctrl\", \"s\"]\n6. scroll at x=300, y=400 with scroll_x=0, scroll_y=-3\n7. move to x=500, y=600\n8. drag along the path [{x:10,y:20},{x:30,y:40}]\n9. wait\n\nAfter executing all actions, reply DONE.","type":"input_text"}],"role":"user"}],"model":"gpt-5.4","reasoning":{"effort":"medium"},"tool_choice":"auto","tools":[{"type":"computer"}]}'
+    headers:
+      Accept:
+      - application/json
+      Content-Type:
+      - application/json
+      User-Agent:
+      - Charm-Fantasy/0.17.1 (https://charm.land/fantasy)
+    url: https://api.openai.com/v1/responses
+    method: POST
+  response:
+    proto: HTTP/2.0
+    proto_major: 2
+    proto_minor: 0
+    content_length: -1
+    uncompressed: true
+    body: |-
+      {
+        "id": "resp_03df45b73631651c0169ef407da7208195abce439eeb9b6edd",
+        "object": "response",
+        "created_at": 1777287293,
+        "status": "completed",
+        "background": false,
+        "billing": {
+          "payer": "developer"
+        },
+        "completed_at": 1777287296,
+        "error": null,
+        "frequency_penalty": 0.0,
+        "incomplete_details": null,
+        "instructions": null,
+        "max_output_tokens": 16000,
+        "max_tool_calls": null,
+        "model": "gpt-5.4-2026-03-05",
+        "moderation": null,
+        "output": [
+          {
+            "id": "rs_03df45b73631651c0169ef407e41288195ae8ed4ff8f860a4c",
+            "type": "reasoning",
+            "summary": []
+          },
+          {
+            "id": "cu_03df45b73631651c0169ef407f91b0819593f0d8b6e9789cc6",
+            "type": "computer_call",
+            "status": "completed",
+            "actions": [
+              {
+                "type": "screenshot"
+              }
+            ],
+            "call_id": "call_Q7Zh8uOhFL2n0EbCIgntgdvp"
+          }
+        ],
+        "parallel_tool_calls": true,
+        "presence_penalty": 0.0,
+        "previous_response_id": null,
+        "prompt_cache_key": null,
+        "prompt_cache_retention": "in_memory",
+        "reasoning": {
+          "effort": "medium",
+          "summary": null
+        },
+        "safety_identifier": null,
+        "service_tier": "default",
+        "store": false,
+        "temperature": 1.0,
+        "text": {
+          "format": {
+            "type": "text"
+          },
+          "verbosity": "medium"
+        },
+        "tool_choice": "auto",
+        "tools": [
+          {
+            "type": "computer"
+          }
+        ],
+        "top_logprobs": 0,
+        "top_p": 0.98,
+        "truncation": "disabled",
+        "usage": {
+          "input_tokens": 1015,
+          "input_tokens_details": {
+            "cached_tokens": 0
+          },
+          "output_tokens": 78,
+          "output_tokens_details": {
+            "reasoning_tokens": 57
+          },
+          "total_tokens": 1093
+        },
+        "user": null,
+        "metadata": {}
+      }
+    headers:
+      Content-Type:
+      - application/json
+    status: 200 OK
+    code: 200
+    duration: 2.859247714s
+- id: 1
+  request:
+    proto: HTTP/1.1
+    proto_major: 1
+    proto_minor: 1
+    content_length: 1419
+    host: ""
+    body: '{"max_output_tokens":16000,"store":false,"input":[{"content":"You control a computer. The user will ask you to perform specific actions. Execute exactly the actions requested. Each computer_call response may contain multiple actions in the actions array. Batch as many as possible into each call. When you have executed all requested actions, reply with the word DONE.","role":"developer"},{"content":[{"text":"Execute every one of these computer actions. Batch them into as few calls as possible.\n\n1. screenshot\n2. click at x=100, y=200 with left button\n3. double_click at x=150, y=250\n4. type the text \"hello world\"\n5. keypress the keys [\"ctrl\", \"s\"]\n6. scroll at x=300, y=400 with scroll_x=0, scroll_y=-3\n7. move to x=500, y=600\n8. drag along the path [{x:10,y:20},{x:30,y:40}]\n9. wait\n\nAfter executing all actions, reply DONE.","type":"input_text"}],"role":"user"},{"id":"cu_03df45b73631651c0169ef407f91b0819593f0d8b6e9789cc6","type":"computer_call","status":"completed","actions":[{"type":"screenshot"}],"call_id":"call_Q7Zh8uOhFL2n0EbCIgntgdvp"},{"call_id":"call_Q7Zh8uOhFL2n0EbCIgntgdvp","output":{"image_url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==","type":"computer_screenshot"},"type":"computer_call_output"}],"model":"gpt-5.4","reasoning":{"effort":"medium"},"tool_choice":"auto","tools":[{"type":"computer"}]}'
+    headers:
+      Accept:
+      - application/json
+      Content-Type:
+      - application/json
+      User-Agent:
+      - Charm-Fantasy/0.17.1 (https://charm.land/fantasy)
+    url: https://api.openai.com/v1/responses
+    method: POST
+  response:
+    proto: HTTP/2.0
+    proto_major: 2
+    proto_minor: 0
+    content_length: -1
+    uncompressed: true
+    body: |-
+      {
+        "id": "resp_03df45b73631651c0169ef408071cc8195a175518f9ce6845c",
+        "object": "response",
+        "created_at": 1777287296,
+        "status": "completed",
+        "background": false,
+        "billing": {
+          "payer": "developer"
+        },
+        "completed_at": 1777287298,
+        "error": null,
+        "frequency_penalty": 0.0,
+        "incomplete_details": null,
+        "instructions": null,
+        "max_output_tokens": 16000,
+        "max_tool_calls": null,
+        "model": "gpt-5.4-2026-03-05",
+        "moderation": null,
+        "output": [
+          {
+            "id": "rs_03df45b73631651c0169ef4080e9e4819596da71c52866a4f2",
+            "type": "reasoning",
+            "summary": []
+          },
+          {
+            "id": "cu_03df45b73631651c0169ef4081990881959457a3f4b66e58f9",
+            "type": "computer_call",
+            "status": "completed",
+            "actions": [
+              {
+                "type": "screenshot"
+              }
+            ],
+            "call_id": "call_3zAEVDWodtT0UAfOjOQEly83"
+          }
+        ],
+        "parallel_tool_calls": true,
+        "presence_penalty": 0.0,
+        "previous_response_id": null,
+        "prompt_cache_key": null,
+        "prompt_cache_retention": "in_memory",
+        "reasoning": {
+          "effort": "medium",
+          "summary": null
+        },
+        "safety_identifier": null,
+        "service_tier": "default",
+        "store": false,
+        "temperature": 1.0,
+        "text": {
+          "format": {
+            "type": "text"
+          },
+          "verbosity": "medium"
+        },
+        "tool_choice": "auto",
+        "tools": [
+          {
+            "type": "computer"
+          }
+        ],
+        "top_logprobs": 0,
+        "top_p": 0.98,
+        "truncation": "disabled",
+        "usage": {
+          "input_tokens": 1033,
+          "input_tokens_details": {
+            "cached_tokens": 0
+          },
+          "output_tokens": 49,
+          "output_tokens_details": {
+            "reasoning_tokens": 31
+          },
+          "total_tokens": 1082
+        },
+        "user": null,
+        "metadata": {}
+      }
+    headers:
+      Content-Type:
+      - application/json
+    status: 200 OK
+    code: 200
+    duration: 1.797597021s
+- id: 2
+  request:
+    proto: HTTP/1.1
+    proto_major: 1
+    proto_minor: 1
+    content_length: 1849
+    host: ""
+    body: '{"max_output_tokens":16000,"store":false,"input":[{"content":"You control a computer. The user will ask you to perform specific actions. Execute exactly the actions requested. Each computer_call response may contain multiple actions in the actions array. Batch as many as possible into each call. When you have executed all requested actions, reply with the word DONE.","role":"developer"},{"content":[{"text":"Execute every one of these computer actions. Batch them into as few calls as possible.\n\n1. screenshot\n2. click at x=100, y=200 with left button\n3. double_click at x=150, y=250\n4. type the text \"hello world\"\n5. keypress the keys [\"ctrl\", \"s\"]\n6. scroll at x=300, y=400 with scroll_x=0, scroll_y=-3\n7. move to x=500, y=600\n8. drag along the path [{x:10,y:20},{x:30,y:40}]\n9. wait\n\nAfter executing all actions, reply DONE.","type":"input_text"}],"role":"user"},{"id":"cu_03df45b73631651c0169ef407f91b0819593f0d8b6e9789cc6","type":"computer_call","status":"completed","actions":[{"type":"screenshot"}],"call_id":"call_Q7Zh8uOhFL2n0EbCIgntgdvp"},{"call_id":"call_Q7Zh8uOhFL2n0EbCIgntgdvp","output":{"image_url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==","type":"computer_screenshot"},"type":"computer_call_output"},{"id":"cu_03df45b73631651c0169ef4081990881959457a3f4b66e58f9","type":"computer_call","status":"completed","actions":[{"type":"screenshot"}],"call_id":"call_3zAEVDWodtT0UAfOjOQEly83"},{"call_id":"call_3zAEVDWodtT0UAfOjOQEly83","output":{"image_url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==","type":"computer_screenshot"},"type":"computer_call_output"}],"model":"gpt-5.4","reasoning":{"effort":"medium"},"tool_choice":"auto","tools":[{"type":"computer"}]}'
+    headers:
+      Accept:
+      - application/json
+      Content-Type:
+      - application/json
+      User-Agent:
+      - Charm-Fantasy/0.17.1 (https://charm.land/fantasy)
+    url: https://api.openai.com/v1/responses
+    method: POST
+  response:
+    proto: HTTP/2.0
+    proto_major: 2
+    proto_minor: 0
+    content_length: -1
+    uncompressed: true
+    body: |-
+      {
+        "id": "resp_03df45b73631651c0169ef408245148195be2994fb70796bb2",
+        "object": "response",
+        "created_at": 1777287298,
+        "status": "completed",
+        "background": false,
+        "billing": {
+          "payer": "developer"
+        },
+        "completed_at": 1777287300,
+        "error": null,
+        "frequency_penalty": 0.0,
+        "incomplete_details": null,
+        "instructions": null,
+        "max_output_tokens": 16000,
+        "max_tool_calls": null,
+        "model": "gpt-5.4-2026-03-05",
+        "moderation": null,
+        "output": [
+          {
+            "id": "rs_03df45b73631651c0169ef4082ffb481959349d5ec87430f39",
+            "type": "reasoning",
+            "summary": []
+          },
+          {
+            "id": "cu_03df45b73631651c0169ef408372e88195a76fb566a5571744",
+            "type": "computer_call",
+            "status": "completed",
+            "actions": [
+              {
+                "type": "click",
+                "button": "left",
+                "keys": null,
+                "x": 100,
+                "y": 200
+              },
+              {
+                "type": "double_click",
+                "keys": null,
+                "x": 150,
+                "y": 250
+              },
+              {
+                "type": "type",
+                "text": "hello world"
+              },
+              {
+                "type": "keypress",
+                "keys": [
+                  "ctrl",
+                  "s"
+                ]
+              },
+              {
+                "type": "scroll",
+                "keys": null,
+                "scroll_x": 0,
+                "scroll_y": -3,
+                "x": 300,
+                "y": 400
+              },
+              {
+                "type": "move",
+                "keys": null,
+                "x": 500,
+                "y": 600
+              },
+              {
+                "type": "drag",
+                "keys": null,
+                "path": [
+                  {
+                    "x": 10,
+                    "y": 20
+                  },
+                  {
+                    "x": 30,
+                    "y": 40
+                  }
+                ]
+              },
+              {
+                "type": "wait"
+              }
+            ],
+            "call_id": "call_bd4VaOSoo9FFNDY8yM0KyXky"
+          }
+        ],
+        "parallel_tool_calls": true,
+        "presence_penalty": 0.0,
+        "previous_response_id": null,
+        "prompt_cache_key": null,
+        "prompt_cache_retention": "in_memory",
+        "reasoning": {
+          "effort": "medium",
+          "summary": null
+        },
+        "safety_identifier": null,
+        "service_tier": "default",
+        "store": false,
+        "temperature": 1.0,
+        "text": {
+          "format": {
+            "type": "text"
+          },
+          "verbosity": "medium"
+        },
+        "tool_choice": "auto",
+        "tools": [
+          {
+            "type": "computer"
+          }
+        ],
+        "top_logprobs": 0,
+        "top_p": 0.98,
+        "truncation": "disabled",
+        "usage": {
+          "input_tokens": 1062,
+          "input_tokens_details": {
+            "cached_tokens": 0
+          },
+          "output_tokens": 145,
+          "output_tokens_details": {
+            "reasoning_tokens": 24
+          },
+          "total_tokens": 1207
+        },
+        "user": null,
+        "metadata": {}
+      }
+    headers:
+      Content-Type:
+      - application/json
+    status: 200 OK
+    code: 200
+    duration: 2.68940653s
+- id: 3
+  request:
+    proto: HTTP/1.1
+    proto_major: 1
+    proto_minor: 1
+    content_length: 2649
+    host: ""
+    body: '{"max_output_tokens":16000,"store":false,"input":[{"content":"You control a computer. The user will ask you to perform specific actions. Execute exactly the actions requested. Each computer_call response may contain multiple actions in the actions array. Batch as many as possible into each call. When you have executed all requested actions, reply with the word DONE.","role":"developer"},{"content":[{"text":"Execute every one of these computer actions. Batch them into as few calls as possible.\n\n1. screenshot\n2. click at x=100, y=200 with left button\n3. double_click at x=150, y=250\n4. type the text \"hello world\"\n5. keypress the keys [\"ctrl\", \"s\"]\n6. scroll at x=300, y=400 with scroll_x=0, scroll_y=-3\n7. move to x=500, y=600\n8. drag along the path [{x:10,y:20},{x:30,y:40}]\n9. wait\n\nAfter executing all actions, reply DONE.","type":"input_text"}],"role":"user"},{"id":"cu_03df45b73631651c0169ef407f91b0819593f0d8b6e9789cc6","type":"computer_call","status":"completed","actions":[{"type":"screenshot"}],"call_id":"call_Q7Zh8uOhFL2n0EbCIgntgdvp"},{"call_id":"call_Q7Zh8uOhFL2n0EbCIgntgdvp","output":{"image_url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==","type":"computer_screenshot"},"type":"computer_call_output"},{"id":"cu_03df45b73631651c0169ef4081990881959457a3f4b66e58f9","type":"computer_call","status":"completed","actions":[{"type":"screenshot"}],"call_id":"call_3zAEVDWodtT0UAfOjOQEly83"},{"call_id":"call_3zAEVDWodtT0UAfOjOQEly83","output":{"image_url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==","type":"computer_screenshot"},"type":"computer_call_output"},{"id":"cu_03df45b73631651c0169ef408372e88195a76fb566a5571744","type":"computer_call","status":"completed","actions":[{"type":"click","button":"left","keys":null,"x":100,"y":200},{"type":"double_click","keys":null,"x":150,"y":250},{"type":"type","text":"hello world"},{"type":"keypress","keys":["ctrl","s"]},{"type":"scroll","keys":null,"scroll_x":0,"scroll_y":-3,"x":300,"y":400},{"type":"move","keys":null,"x":500,"y":600},{"type":"drag","keys":null,"path":[{"x":10,"y":20},{"x":30,"y":40}]},{"type":"wait"}],"call_id":"call_bd4VaOSoo9FFNDY8yM0KyXky"},{"call_id":"call_bd4VaOSoo9FFNDY8yM0KyXky","output":{"image_url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==","type":"computer_screenshot"},"type":"computer_call_output"}],"model":"gpt-5.4","reasoning":{"effort":"medium"},"tool_choice":"auto","tools":[{"type":"computer"}]}'
+    headers:
+      Accept:
+      - application/json
+      Content-Type:
+      - application/json
+      User-Agent:
+      - Charm-Fantasy/0.17.1 (https://charm.land/fantasy)
+    url: https://api.openai.com/v1/responses
+    method: POST
+  response:
+    proto: HTTP/2.0
+    proto_major: 2
+    proto_minor: 0
+    content_length: -1
+    uncompressed: true
+    body: |-
+      {
+        "id": "resp_03df45b73631651c0169ef4084f02c8195872709b25e01d525",
+        "object": "response",
+        "created_at": 1777287300,
+        "status": "completed",
+        "background": false,
+        "billing": {
+          "payer": "developer"
+        },
+        "completed_at": 1777287301,
+        "error": null,
+        "frequency_penalty": 0.0,
+        "incomplete_details": null,
+        "instructions": null,
+        "max_output_tokens": 16000,
+        "max_tool_calls": null,
+        "model": "gpt-5.4-2026-03-05",
+        "moderation": null,
+        "output": [
+          {
+            "id": "msg_03df45b73631651c0169ef40856d248195a3a6031a6d3e4083",
+            "type": "message",
+            "status": "completed",
+            "content": [
+              {
+                "type": "output_text",
+                "annotations": [],
+                "logprobs": [],
+                "text": "DONE"
+              }
+            ],
+            "phase": "final_answer",
+            "role": "assistant"
+          }
+        ],
+        "parallel_tool_calls": true,
+        "presence_penalty": 0.0,
+        "previous_response_id": null,
+        "prompt_cache_key": null,
+        "prompt_cache_retention": "in_memory",
+        "reasoning": {
+          "effort": "medium",
+          "summary": null
+        },
+        "safety_identifier": null,
+        "service_tier": "default",
+        "store": false,
+        "temperature": 1.0,
+        "text": {
+          "format": {
+            "type": "text"
+          },
+          "verbosity": "medium"
+        },
+        "tool_choice": "auto",
+        "tools": [
+          {
+            "type": "computer"
+          }
+        ],
+        "top_logprobs": 0,
+        "top_p": 0.98,
+        "truncation": "disabled",
+        "usage": {
+          "input_tokens": 1251,
+          "input_tokens_details": {
+            "cached_tokens": 0
+          },
+          "output_tokens": 5,
+          "output_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "total_tokens": 1256
+        },
+        "user": null,
+        "metadata": {}
+      }
+    headers:
+      Content-Type:
+      - application/json
+    status: 200 OK
+    code: 200
+    duration: 867.213345ms

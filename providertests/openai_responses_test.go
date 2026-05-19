@@ -40,7 +40,7 @@ func TestOpenAIResponsesWithSummaryThinking(t *testing.T) {
 				openai.IncludeReasoningEncryptedContent,
 			},
 			ReasoningEffort:  openai.ReasoningEffortOption(openai.ReasoningEffortHigh),
-			ReasoningSummary: new("auto"),
+			ReasoningSummary: fantasy.Opt("auto"),
 		},
 	}
 	var pairs []builderPair

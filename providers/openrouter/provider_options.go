@@ -195,10 +195,8 @@ type ReasoningData struct {
 }
 
 // ReasoningEffortOption creates a pointer to a ReasoningEffort value for OpenRouter.
-//
-//go:fix inline
 func ReasoningEffortOption(e ReasoningEffort) *ReasoningEffort {
-	return new(e)
+	return &e
 }
 
 // NewProviderOptions creates new provider options for OpenRouter.

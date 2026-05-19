@@ -46,6 +46,20 @@ func init() {
 		}
 		return &v, nil
 	})
+	fantasy.RegisterProviderType(TypeComputerUseMetadata, func(data []byte) (fantasy.ProviderOptionsData, error) {
+		var v ComputerUseMetadata
+		if err := json.Unmarshal(data, &v); err != nil {
+			return nil, err
+		}
+		return &v, nil
+	})
+	fantasy.RegisterProviderType(TypeComputerCallOutputOptions, func(data []byte) (fantasy.ProviderOptionsData, error) {
+		var v ComputerCallOutputOptions
+		if err := json.Unmarshal(data, &v); err != nil {
+			return nil, err
+		}
+		return &v, nil
+	})
 }
 
 // ResponsesProviderMetadata contains response-level metadata from the OpenAI Responses API.
@@ -219,6 +233,8 @@ var responsesReasoningModelIDs = []string{
 	"gpt-5.4-mini",
 	"gpt-5.4-nano",
 	"gpt-5.4-codex",
+	"gpt-5.5",
+	"gpt-5.5-pro",
 	"gpt-oss-120b",
 }
 

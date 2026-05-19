@@ -1,0 +1,186 @@
+---
+version: 2
+interactions:
+- id: 0
+  request:
+    proto: HTTP/1.1
+    proto_major: 1
+    proto_minor: 1
+    content_length: 377
+    host: ""
+    body: '{"max_output_tokens":4000,"store":false,"input":[{"content":"You are a helpful assistant that can control a computer. Take a screenshot when asked.","role":"developer"},{"content":[{"text":"Take a screenshot of the desktop","type":"input_text"}],"role":"user"}],"model":"gpt-5.4","reasoning":{"effort":"medium"},"tool_choice":"auto","tools":[{"type":"computer"}],"stream":true}'
+    headers:
+      Accept:
+      - application/json
+      Content-Type:
+      - application/json
+      User-Agent:
+      - Charm-Fantasy/0.17.1 (https://charm.land/fantasy)
+    url: https://api.openai.com/v1/responses
+    method: POST
+  response:
+    proto: HTTP/2.0
+    proto_major: 2
+    proto_minor: 0
+    content_length: -1
+    body: |+
+      event: response.created
+      data: {"type":"response.created","response":{"id":"resp_0eb8ac26cb4f56510169ef4797c6d08190909d025c2f5168d6","object":"response","created_at":1777289111,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":4000,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":"medium","summary":null},"safety_identifier":null,"service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"computer"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+      event: response.in_progress
+      data: {"type":"response.in_progress","response":{"id":"resp_0eb8ac26cb4f56510169ef4797c6d08190909d025c2f5168d6","object":"response","created_at":1777289111,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":4000,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":"medium","summary":null},"safety_identifier":null,"service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"computer"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+      event: response.output_item.added
+      data: {"type":"response.output_item.added","item":{"id":"rs_0eb8ac26cb4f56510169ef479844f881908b0b2560fc2bef20","type":"reasoning","summary":[]},"output_index":0,"sequence_number":2}
+
+      event: response.output_item.done
+      data: {"type":"response.output_item.done","item":{"id":"rs_0eb8ac26cb4f56510169ef479844f881908b0b2560fc2bef20","type":"reasoning","summary":[]},"output_index":0,"sequence_number":3}
+
+      event: response.output_item.added
+      data: {"type":"response.output_item.added","item":{"id":"cu_0eb8ac26cb4f56510169ef4799b5a881908e6ef489cf012639","type":"computer_call","status":"in_progress","call_id":"call_AwjX3CUm1eKMBmcCFSxg5O7E"},"output_index":1,"sequence_number":4}
+
+      event: response.output_item.done
+      data: {"type":"response.output_item.done","item":{"id":"cu_0eb8ac26cb4f56510169ef4799b5a881908e6ef489cf012639","type":"computer_call","status":"completed","actions":[{"type":"screenshot"}],"call_id":"call_AwjX3CUm1eKMBmcCFSxg5O7E"},"output_index":1,"sequence_number":5}
+
+      event: response.completed
+      data: {"type":"response.completed","response":{"id":"resp_0eb8ac26cb4f56510169ef4797c6d08190909d025c2f5168d6","object":"response","created_at":1777289111,"status":"completed","background":false,"completed_at":1777289114,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":4000,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[{"id":"rs_0eb8ac26cb4f56510169ef479844f881908b0b2560fc2bef20","type":"reasoning","summary":[]},{"id":"cu_0eb8ac26cb4f56510169ef4799b5a881908e6ef489cf012639","type":"computer_call","status":"completed","actions":[{"type":"screenshot"}],"call_id":"call_AwjX3CUm1eKMBmcCFSxg5O7E"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":"medium","summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"computer"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":844,"input_tokens_details":{"cached_tokens":0},"output_tokens":92,"output_tokens_details":{"reasoning_tokens":75},"total_tokens":936},"user":null,"metadata":{}},"sequence_number":6}
+
+    headers:
+      Content-Type:
+      - text/event-stream; charset=utf-8
+    status: 200 OK
+    code: 200
+    duration: 240.24655ms
+- id: 1
+  request:
+    proto: HTTP/1.1
+    proto_major: 1
+    proto_minor: 1
+    content_length: 807
+    host: ""
+    body: '{"max_output_tokens":4000,"store":false,"input":[{"content":"You are a helpful assistant that can control a computer. Take a screenshot when asked.","role":"developer"},{"content":[{"text":"Take a screenshot of the desktop","type":"input_text"}],"role":"user"},{"id":"cu_0eb8ac26cb4f56510169ef4799b5a881908e6ef489cf012639","type":"computer_call","status":"completed","actions":[{"type":"screenshot"}],"call_id":"call_AwjX3CUm1eKMBmcCFSxg5O7E"},{"call_id":"call_AwjX3CUm1eKMBmcCFSxg5O7E","output":{"image_url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==","type":"computer_screenshot"},"type":"computer_call_output"}],"model":"gpt-5.4","reasoning":{"effort":"medium"},"tool_choice":"auto","tools":[{"type":"computer"}],"stream":true}'
+    headers:
+      Accept:
+      - application/json
+      Content-Type:
+      - application/json
+      User-Agent:
+      - Charm-Fantasy/0.17.1 (https://charm.land/fantasy)
+    url: https://api.openai.com/v1/responses
+    method: POST
+  response:
+    proto: HTTP/2.0
+    proto_major: 2
+    proto_minor: 0
+    content_length: -1
+    body: |+
+      event: response.created
+      data: {"type":"response.created","response":{"id":"resp_0eb8ac26cb4f56510169ef479a42b0819091f6a3e8e3f4002e","object":"response","created_at":1777289114,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":4000,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":"medium","summary":null},"safety_identifier":null,"service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"computer"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+      event: response.in_progress
+      data: {"type":"response.in_progress","response":{"id":"resp_0eb8ac26cb4f56510169ef479a42b0819091f6a3e8e3f4002e","object":"response","created_at":1777289114,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":4000,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":"medium","summary":null},"safety_identifier":null,"service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"computer"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+      event: response.output_item.added
+      data: {"type":"response.output_item.added","item":{"id":"rs_0eb8ac26cb4f56510169ef479aacc48190911f982d7a27c087","type":"reasoning","summary":[]},"output_index":0,"sequence_number":2}
+
+      event: response.output_item.done
+      data: {"type":"response.output_item.done","item":{"id":"rs_0eb8ac26cb4f56510169ef479aacc48190911f982d7a27c087","type":"reasoning","summary":[]},"output_index":0,"sequence_number":3}
+
+      event: response.output_item.added
+      data: {"type":"response.output_item.added","item":{"id":"cu_0eb8ac26cb4f56510169ef479bd778819085591adaa9dd71ec","type":"computer_call","status":"in_progress","call_id":"call_dEpju2GfsoaXrpZaXb88neoE"},"output_index":1,"sequence_number":4}
+
+      event: response.output_item.done
+      data: {"type":"response.output_item.done","item":{"id":"cu_0eb8ac26cb4f56510169ef479bd778819085591adaa9dd71ec","type":"computer_call","status":"completed","actions":[{"type":"screenshot"}],"call_id":"call_dEpju2GfsoaXrpZaXb88neoE"},"output_index":1,"sequence_number":5}
+
+      event: response.completed
+      data: {"type":"response.completed","response":{"id":"resp_0eb8ac26cb4f56510169ef479a42b0819091f6a3e8e3f4002e","object":"response","created_at":1777289114,"status":"completed","background":false,"completed_at":1777289116,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":4000,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[{"id":"rs_0eb8ac26cb4f56510169ef479aacc48190911f982d7a27c087","type":"reasoning","summary":[]},{"id":"cu_0eb8ac26cb4f56510169ef479bd778819085591adaa9dd71ec","type":"computer_call","status":"completed","actions":[{"type":"screenshot"}],"call_id":"call_dEpju2GfsoaXrpZaXb88neoE"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":"medium","summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"computer"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":862,"input_tokens_details":{"cached_tokens":0},"output_tokens":78,"output_tokens_details":{"reasoning_tokens":61},"total_tokens":940},"user":null,"metadata":{}},"sequence_number":6}
+
+    headers:
+      Content-Type:
+      - text/event-stream; charset=utf-8
+    status: 200 OK
+    code: 200
+    duration: 246.169757ms
+- id: 2
+  request:
+    proto: HTTP/1.1
+    proto_major: 1
+    proto_minor: 1
+    content_length: 1237
+    host: ""
+    body: '{"max_output_tokens":4000,"store":false,"input":[{"content":"You are a helpful assistant that can control a computer. Take a screenshot when asked.","role":"developer"},{"content":[{"text":"Take a screenshot of the desktop","type":"input_text"}],"role":"user"},{"id":"cu_0eb8ac26cb4f56510169ef4799b5a881908e6ef489cf012639","type":"computer_call","status":"completed","actions":[{"type":"screenshot"}],"call_id":"call_AwjX3CUm1eKMBmcCFSxg5O7E"},{"call_id":"call_AwjX3CUm1eKMBmcCFSxg5O7E","output":{"image_url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==","type":"computer_screenshot"},"type":"computer_call_output"},{"id":"cu_0eb8ac26cb4f56510169ef479bd778819085591adaa9dd71ec","type":"computer_call","status":"completed","actions":[{"type":"screenshot"}],"call_id":"call_dEpju2GfsoaXrpZaXb88neoE"},{"call_id":"call_dEpju2GfsoaXrpZaXb88neoE","output":{"image_url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==","type":"computer_screenshot"},"type":"computer_call_output"}],"model":"gpt-5.4","reasoning":{"effort":"medium"},"tool_choice":"auto","tools":[{"type":"computer"}],"stream":true}'
+    headers:
+      Accept:
+      - application/json
+      Content-Type:
+      - application/json
+      User-Agent:
+      - Charm-Fantasy/0.17.1 (https://charm.land/fantasy)
+    url: https://api.openai.com/v1/responses
+    method: POST
+  response:
+    proto: HTTP/2.0
+    proto_major: 2
+    proto_minor: 0
+    content_length: -1
+    body: |+
+      event: response.created
+      data: {"type":"response.created","response":{"id":"resp_0eb8ac26cb4f56510169ef479c6f8c819097591c8751869250","object":"response","created_at":1777289116,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":4000,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":"medium","summary":null},"safety_identifier":null,"service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"computer"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+      event: response.in_progress
+      data: {"type":"response.in_progress","response":{"id":"resp_0eb8ac26cb4f56510169ef479c6f8c819097591c8751869250","object":"response","created_at":1777289116,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":4000,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":"medium","summary":null},"safety_identifier":null,"service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"computer"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+      event: response.output_item.added
+      data: {"type":"response.output_item.added","item":{"id":"msg_0eb8ac26cb4f56510169ef479d1fe8819090a83fe81592b968","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":2}
+
+      event: response.content_part.added
+      data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_0eb8ac26cb4f56510169ef479d1fe8819090a83fe81592b968","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+      event: response.output_text.delta
+      data: {"type":"response.output_text.delta","content_index":0,"delta":"Here","item_id":"msg_0eb8ac26cb4f56510169ef479d1fe8819090a83fe81592b968","logprobs":[],"obfuscation":"HB4wKaTBQsrf","output_index":0,"sequence_number":4}
+
+      event: response.output_text.delta
+      data: {"type":"response.output_text.delta","content_index":0,"delta":" is","item_id":"msg_0eb8ac26cb4f56510169ef479d1fe8819090a83fe81592b968","logprobs":[],"obfuscation":"G8nHIXvLq9RoG","output_index":0,"sequence_number":5}
+
+      event: response.output_text.delta
+      data: {"type":"response.output_text.delta","content_index":0,"delta":" a","item_id":"msg_0eb8ac26cb4f56510169ef479d1fe8819090a83fe81592b968","logprobs":[],"obfuscation":"VBOCHWFog5suDl","output_index":0,"sequence_number":6}
+
+      event: response.output_text.delta
+      data: {"type":"response.output_text.delta","content_index":0,"delta":" screenshot","item_id":"msg_0eb8ac26cb4f56510169ef479d1fe8819090a83fe81592b968","logprobs":[],"obfuscation":"PzjsZ","output_index":0,"sequence_number":7}
+
+      event: response.output_text.delta
+      data: {"type":"response.output_text.delta","content_index":0,"delta":" of","item_id":"msg_0eb8ac26cb4f56510169ef479d1fe8819090a83fe81592b968","logprobs":[],"obfuscation":"gBCIAYmP03LCQ","output_index":0,"sequence_number":8}
+
+      event: response.output_text.delta
+      data: {"type":"response.output_text.delta","content_index":0,"delta":" the","item_id":"msg_0eb8ac26cb4f56510169ef479d1fe8819090a83fe81592b968","logprobs":[],"obfuscation":"29OatDKb1zor","output_index":0,"sequence_number":9}
+
+      event: response.output_text.delta
+      data: {"type":"response.output_text.delta","content_index":0,"delta":" desktop","item_id":"msg_0eb8ac26cb4f56510169ef479d1fe8819090a83fe81592b968","logprobs":[],"obfuscation":"eX3Gkjrp","output_index":0,"sequence_number":10}
+
+      event: response.output_text.delta
+      data: {"type":"response.output_text.delta","content_index":0,"delta":":","item_id":"msg_0eb8ac26cb4f56510169ef479d1fe8819090a83fe81592b968","logprobs":[],"obfuscation":"GxUFhoVsNAabcKB","output_index":0,"sequence_number":11}
+
+      event: response.output_text.delta
+      data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"msg_0eb8ac26cb4f56510169ef479d1fe8819090a83fe81592b968","logprobs":[],"obfuscation":"NAnGKLeE8I9lPxx","output_index":0,"sequence_number":12}
+
+      event: response.output_text.delta
+      data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"msg_0eb8ac26cb4f56510169ef479d1fe8819090a83fe81592b968","logprobs":[],"obfuscation":"U6NaW4WRnXUCkmE","output_index":0,"sequence_number":13}
+
+      event: response.output_text.done
+      data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_0eb8ac26cb4f56510169ef479d1fe8819090a83fe81592b968","logprobs":[],"output_index":0,"sequence_number":14,"text":"Here is a screenshot of the desktop:  "}
+
+      event: response.content_part.done
+      data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_0eb8ac26cb4f56510169ef479d1fe8819090a83fe81592b968","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"Here is a screenshot of the desktop:  "},"sequence_number":15}
+
+      event: response.output_item.done
+      data: {"type":"response.output_item.done","item":{"id":"msg_0eb8ac26cb4f56510169ef479d1fe8819090a83fe81592b968","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"Here is a screenshot of the desktop:  "}],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":16}
+
+      event: response.completed
+      data: {"type":"response.completed","response":{"id":"resp_0eb8ac26cb4f56510169ef479c6f8c819097591c8751869250","object":"response","created_at":1777289116,"status":"completed","background":false,"completed_at":1777289117,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":4000,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[{"id":"msg_0eb8ac26cb4f56510169ef479d1fe8819090a83fe81592b968","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"Here is a screenshot of the desktop:  "}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":"medium","summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"computer"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":891,"input_tokens_details":{"cached_tokens":0},"output_tokens":22,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":913},"user":null,"metadata":{}},"sequence_number":17}
+
+    headers:
+      Content-Type:
+      - text/event-stream; charset=utf-8
+    status: 200 OK
+    code: 200
+    duration: 510.644132ms

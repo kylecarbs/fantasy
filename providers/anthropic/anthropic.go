@@ -66,6 +66,14 @@ const (
 	VertexAuthScope = "https://www.googleapis.com/auth/cloud-platform"
 )
 
+const (
+	anthropicReasoningMetadataMissingPrefix      = "[anthropic.reasoning_metadata_missing]"
+	anthropicReasoningMetadataTypeMismatchPrefix = "[anthropic.reasoning_metadata_type_mismatch]"
+	anthropicReasoningMetadataEmptyPrefix        = "[anthropic.reasoning_metadata_empty]"
+	anthropicWebSearchMetadataMissingPrefix      = "[anthropic.web_search_metadata_missing]"
+	anthropicWebSearchMetadataTypeMismatchPrefix = "[anthropic.web_search_metadata_type_mismatch]"
+)
+
 type options struct {
 	baseURL   string
 	apiKey    string
@@ -399,6 +407,94 @@ func GetReasoningMetadata(providerOptions fantasy.ProviderOptions) *ReasoningOpt
 		}
 	}
 	return nil
+}
+
+func metadataWarning(prefix, message string, args ...any) fantasy.CallWarning {
+	warning := message
+	if len(args) > 0 {
+		warning = fmt.Sprintf(message, args...)
+	}
+	return fantasy.CallWarning{
+		Type:    fantasy.CallWarningTypeOther,
+		Message: prefix + " " + warning,
+	}
+}
+
+func reasoningMetadataForEncode(options fantasy.ProviderOptions) (*ReasoningOptionMetadata, *fantasy.CallWarning) {
+	providerOption, ok := options[Name]
+	if !ok {
+		warning := metadataWarning(
+			anthropicReasoningMetadataMissingPrefix,
+			"dropping reasoning block because Anthropic reasoning metadata is missing",
+		)
+		return nil, &warning
+	}
+	metadata, ok := providerOption.(*ReasoningOptionMetadata)
+	if !ok {
+		warning := metadataWarning(
+			anthropicReasoningMetadataTypeMismatchPrefix,
+			"dropping reasoning block because Anthropic reasoning metadata had unexpected type %T",
+			providerOption,
+		)
+		return nil, &warning
+	}
+	if metadata == nil || (metadata.Signature == "" && metadata.RedactedData == "") {
+		warning := metadataWarning(
+			anthropicReasoningMetadataEmptyPrefix,
+			"dropping reasoning block because Anthropic reasoning metadata was empty",
+		)
+		return nil, &warning
+	}
+	return metadata, nil
+}
+
+func webSearchResultMetadataForEncode(options fantasy.ProviderOptions) (*WebSearchResultMetadata, *fantasy.CallWarning) {
+	providerOption, ok := options[Name]
+	if !ok {
+		warning := metadataWarning(
+			anthropicWebSearchMetadataMissingPrefix,
+			"encoding provider-executed web_search_tool_result with empty result fallback because Anthropic web search metadata is missing",
+		)
+		return &WebSearchResultMetadata{}, &warning
+	}
+	metadata, ok := providerOption.(*WebSearchResultMetadata)
+	if !ok {
+		warning := metadataWarning(
+			anthropicWebSearchMetadataTypeMismatchPrefix,
+			"encoding provider-executed web_search_tool_result with empty result fallback because Anthropic web search metadata had unexpected type %T",
+			providerOption,
+		)
+		return &WebSearchResultMetadata{}, &warning
+	}
+	if metadata == nil {
+		warning := metadataWarning(
+			anthropicWebSearchMetadataMissingPrefix,
+			"encoding provider-executed web_search_tool_result with empty result fallback because Anthropic web search metadata was nil",
+		)
+		return &WebSearchResultMetadata{}, &warning
+	}
+	return metadata, nil
+}
+
+func reasoningEndProviderMetadata(contentBlock anthropic.ContentBlockUnion) fantasy.ProviderMetadata {
+	switch contentBlock.Type {
+	case "thinking":
+		if contentBlock.Signature == "" {
+			return nil
+		}
+		return fantasy.ProviderMetadata{
+			Name: &ReasoningOptionMetadata{Signature: contentBlock.Signature},
+		}
+	case "redacted_thinking":
+		if contentBlock.Data == "" {
+			return nil
+		}
+		return fantasy.ProviderMetadata{
+			Name: &ReasoningOptionMetadata{RedactedData: contentBlock.Data},
+		}
+	default:
+		return nil
+	}
 }
 
 type providerExecutedOperation struct {
@@ -1061,25 +1157,16 @@ func toPrompt(prompt fantasy.Prompt, sendReasoningData bool) ([]anthropic.TextBl
 							})
 							continue
 						}
-						reasoningMetadata := GetReasoningMetadata(part.Options())
-						if reasoningMetadata == nil {
-							warnings = append(warnings, fantasy.CallWarning{
-								Type:    fantasy.CallWarningTypeOther,
-								Message: "unsupported reasoning metadata",
-							})
+						reasoningMetadata, warning := reasoningMetadataForEncode(part.Options())
+						if warning != nil {
+							warnings = append(warnings, *warning)
 							continue
 						}
 
 						if reasoningMetadata.Signature != "" {
 							anthropicContent = append(anthropicContent, anthropic.NewThinkingBlock(reasoningMetadata.Signature, reasoning.Text))
-						} else if reasoningMetadata.RedactedData != "" {
-							anthropicContent = append(anthropicContent, anthropic.NewRedactedThinkingBlock(reasoningMetadata.RedactedData))
 						} else {
-							warnings = append(warnings, fantasy.CallWarning{
-								Type:    fantasy.CallWarningTypeOther,
-								Message: "unsupported reasoning metadata",
-							})
-							continue
+							anthropicContent = append(anthropicContent, anthropic.NewRedactedThinkingBlock(reasoningMetadata.RedactedData))
 						}
 					case fantasy.ContentTypeToolCall:
 						toolCall, ok := fantasy.AsMessagePart[fantasy.ToolCallPart](part)
@@ -1121,11 +1208,9 @@ func toPrompt(prompt fantasy.Prompt, sendReasoningData bool) ([]anthropic.TextBl
 						if result.ProviderExecuted {
 							// Reconstruct web_search_tool_result block
 							// with encrypted_content for round-tripping.
-							searchMeta := &WebSearchResultMetadata{}
-							if webMeta, ok := result.ProviderOptions[Name]; ok {
-								if typed, ok := webMeta.(*WebSearchResultMetadata); ok {
-									searchMeta = typed
-								}
+							searchMeta, warning := webSearchResultMetadataForEncode(result.ProviderOptions)
+							if warning != nil {
+								warnings = append(warnings, *warning)
 							}
 							anthropicContent = append(anthropicContent, buildWebSearchToolResultBlock(result.ToolCallID, searchMeta))
 							continue
@@ -1170,24 +1255,37 @@ func hasVisibleAssistantContent(content []anthropic.ContentBlockParamUnion) bool
 // buildWebSearchToolResultBlock constructs an Anthropic
 // web_search_tool_result content block from structured metadata.
 func buildWebSearchToolResultBlock(toolCallID string, searchMeta *WebSearchResultMetadata) anthropic.ContentBlockParamUnion {
-	resultBlocks := make([]anthropic.WebSearchResultBlockParam, 0, len(searchMeta.Results))
-	for _, r := range searchMeta.Results {
-		block := anthropic.WebSearchResultBlockParam{
-			URL:              r.URL,
-			Title:            r.Title,
-			EncryptedContent: r.EncryptedContent,
+	var content anthropic.WebSearchToolResultBlockParamContentUnion
+	switch {
+	case searchMeta != nil && len(searchMeta.Results) > 0:
+		resultBlocks := make([]anthropic.WebSearchResultBlockParam, 0, len(searchMeta.Results))
+		for _, r := range searchMeta.Results {
+			block := anthropic.WebSearchResultBlockParam{
+				URL:              r.URL,
+				Title:            r.Title,
+				EncryptedContent: r.EncryptedContent,
+			}
+			if r.PageAge != "" {
+				block.PageAge = param.NewOpt(r.PageAge)
+			}
+			resultBlocks = append(resultBlocks, block)
 		}
-		if r.PageAge != "" {
-			block.PageAge = param.NewOpt(r.PageAge)
+		content = anthropic.WebSearchToolResultBlockParamContentUnion{
+			OfWebSearchToolResultBlockItem: resultBlocks,
 		}
-		resultBlocks = append(resultBlocks, block)
+	case searchMeta != nil && searchMeta.ErrorCode != "":
+		content = anthropic.NewWebSearchToolRequestError(
+			anthropic.WebSearchToolResultErrorCode(searchMeta.ErrorCode),
+		)
+	default:
+		content = anthropic.WebSearchToolResultBlockParamContentUnion{
+			OfWebSearchToolResultBlockItem: []anthropic.WebSearchResultBlockParam{},
+		}
 	}
 	return anthropic.ContentBlockParamUnion{
 		OfWebSearchToolResult: &anthropic.WebSearchToolResultBlockParam{
 			ToolUseID: toolCallID,
-			Content: anthropic.WebSearchToolResultBlockParamContentUnion{
-				OfWebSearchToolResultBlockItem: resultBlocks,
-			},
+			Content:   content,
 		},
 	}
 }
@@ -1317,6 +1415,12 @@ func (a languageModel) Generate(ctx context.Context, call fantasy.Call) (*fantas
 						Results: metadataResults,
 					},
 				}
+			} else if webSearchResult.Content.ErrorCode != "" {
+				toolResult.ProviderMetadata = fantasy.ProviderMetadata{
+					Name: &WebSearchResultMetadata{
+						ErrorCode: string(webSearchResult.Content.ErrorCode),
+					},
+				}
 			}
 			operation, ok := providerExecutedOperations[webSearchResult.ToolUseID]
 			if !ok {
@@ -1367,6 +1471,7 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 	stream := a.client.Messages.NewStreaming(ctx, *params, reqOpts...)
 	acc := anthropic.Message{}
 	providerExecutedOperations := make(map[string]providerExecutedOperation)
+	var sawMessageStop bool
 	return func(yield func(fantasy.StreamPart) bool) {
 		if len(warnings) > 0 {
 			if !yield(fantasy.StreamPart{
@@ -1440,8 +1545,17 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 					}
 				case "thinking":
 					if !yield(fantasy.StreamPart{
-						Type: fantasy.StreamPartTypeReasoningEnd,
-						ID:   fmt.Sprintf("%d", chunk.Index),
+						Type:             fantasy.StreamPartTypeReasoningEnd,
+						ID:               fmt.Sprintf("%d", chunk.Index),
+						ProviderMetadata: reasoningEndProviderMetadata(contentBlock),
+					}) {
+						return
+					}
+				case "redacted_thinking":
+					if !yield(fantasy.StreamPart{
+						Type:             fantasy.StreamPartTypeReasoningEnd,
+						ID:               fmt.Sprintf("%d", chunk.Index),
+						ProviderMetadata: reasoningEndProviderMetadata(contentBlock),
 					}) {
 						return
 					}
@@ -1510,11 +1624,15 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 								PageAge:          item.PageAge,
 							})
 						}
-					}
-					if len(metadataResults) > 0 {
 						providerMeta = fantasy.ProviderMetadata{
 							Name: &WebSearchResultMetadata{
 								Results: metadataResults,
+							},
+						}
+					} else if contentBlock.Content.ErrorCode != "" {
+						providerMeta = fantasy.ProviderMetadata{
+							Name: &WebSearchResultMetadata{
+								ErrorCode: string(contentBlock.Content.ErrorCode),
 							},
 						}
 					}
@@ -1579,6 +1697,7 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 					}
 				}
 			case "message_stop":
+				sawMessageStop = true
 			}
 		}
 
@@ -1603,6 +1722,16 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 				yield(fantasy.StreamPart{
 					Type:  fantasy.StreamPartTypeError,
 					Error: incompleteErr,
+				})
+				return
+			}
+			if !sawMessageStop {
+				if err == nil {
+					err = io.EOF
+				}
+				yield(fantasy.StreamPart{
+					Type:  fantasy.StreamPartTypeError,
+					Error: fmt.Errorf("anthropic stream closed before message_stop: %w", err),
 				})
 				return
 			}
