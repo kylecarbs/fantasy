@@ -39,6 +39,46 @@ func TestGenerate_WebSearchResponseRejectsDuplicateProviderOperationIDs(t *testi
 	require.ErrorContains(t, err, "duplicate ID")
 }
 
+func TestGenerate_WebSearchResponsePausedTurnEmitsUnmatchedProviderOperation(t *testing.T) {
+	t.Parallel()
+
+	response := mockAnthropicWebSearchResponse()
+	content, ok := response["content"].([]any)
+	require.True(t, ok)
+	response["content"] = []any{content[0]}
+	response["stop_reason"] = "pause_turn"
+
+	server, _ := newAnthropicJSONServer(response)
+	defer server.Close()
+
+	provider, err := New(
+		WithAPIKey("test-api-key"),
+		WithBaseURL(server.URL),
+	)
+	require.NoError(t, err)
+
+	model, err := provider.LanguageModel(context.Background(), "claude-sonnet-4-20250514")
+	require.NoError(t, err)
+
+	result, err := model.Generate(context.Background(), fantasy.Call{
+		Prompt: testPrompt(),
+		Tools: []fantasy.Tool{
+			WebSearchTool(nil),
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, fantasy.FinishReasonStop, result.FinishReason)
+	require.True(t, IsPauseTurnStopReason(result.ProviderMetadata))
+
+	toolCalls := result.Content.ToolCalls()
+	require.Len(t, toolCalls, 1)
+	require.True(t, toolCalls[0].ProviderExecuted)
+	require.Equal(t, "srvtoolu_01", toolCalls[0].ToolCallID)
+	require.Equal(t, "web_search", toolCalls[0].ToolName)
+	require.JSONEq(t, `{"query":"latest AI news"}`, toolCalls[0].Input)
+	require.Empty(t, result.Content.ToolResults())
+}
+
 func TestStream_WebSearchResponseRejectsOrphanResultBeforeSources(t *testing.T) {
 	t.Parallel()
 
@@ -176,6 +216,82 @@ func TestStream_WebSearchResponseHandlesMultipleProviderOperations(t *testing.T)
 	require.Equal(t, []string{"srvtoolu_01", "srvtoolu_02"}, providerToolResultIDs)
 }
 
+func TestStream_WebSearchResponsePausedTurnEmitsUnmatchedProviderOperation(t *testing.T) {
+	t.Parallel()
+
+	parts := collectAnthropicStreamPartsFromChunks(t, concatAnthropicChunkSets(
+		anthropicWebSearchMessageStartChunks(),
+		anthropicWebSearchServerToolUseChunks(0, "srvtoolu_01"),
+		anthropicWebSearchMessageDeltaChunks("pause_turn"),
+		anthropicWebSearchMessageStopChunks(),
+	))
+
+	var providerToolEvents []fantasy.StreamPart
+	var errorParts []fantasy.StreamPart
+	var finishParts []fantasy.StreamPart
+	for _, part := range parts {
+		switch part.Type {
+		case fantasy.StreamPartTypeToolInputStart,
+			fantasy.StreamPartTypeToolInputEnd,
+			fantasy.StreamPartTypeToolCall,
+			fantasy.StreamPartTypeToolResult:
+			if part.ProviderExecuted {
+				providerToolEvents = append(providerToolEvents, part)
+			}
+		case fantasy.StreamPartTypeError:
+			errorParts = append(errorParts, part)
+		case fantasy.StreamPartTypeFinish:
+			finishParts = append(finishParts, part)
+		}
+	}
+
+	require.Empty(t, errorParts)
+	require.Len(t, providerToolEvents, 3)
+	require.Equal(t, fantasy.StreamPartTypeToolInputStart, providerToolEvents[0].Type)
+	require.Equal(t, fantasy.StreamPartTypeToolInputEnd, providerToolEvents[1].Type)
+	require.Equal(t, fantasy.StreamPartTypeToolCall, providerToolEvents[2].Type)
+	require.Equal(t, "srvtoolu_01", providerToolEvents[2].ID)
+	require.JSONEq(t, `{}`, providerToolEvents[2].ToolCallInput)
+	require.Len(t, finishParts, 1)
+	require.Equal(t, fantasy.FinishReasonStop, finishParts[0].FinishReason)
+	require.True(t, IsPauseTurnStopReason(finishParts[0].ProviderMetadata))
+}
+
+func TestStream_WebSearchResponsePausedTurnWithTransportErrorDoesNotReportIncompleteOperation(t *testing.T) {
+	t.Parallel()
+
+	parts := collectAnthropicStreamPartsFromChunks(t, concatAnthropicChunkSets(
+		anthropicWebSearchMessageStartChunks(),
+		anthropicWebSearchServerToolUseChunks(0, "srvtoolu_01"),
+		anthropicWebSearchMessageDeltaChunks("pause_turn"),
+		[]string{
+			"event: content_block_delta\n",
+			"data: {not-json}\n\n",
+		},
+	))
+
+	var providerToolEvents []fantasy.StreamPart
+	var errorParts []fantasy.StreamPart
+	for _, part := range parts {
+		switch part.Type {
+		case fantasy.StreamPartTypeToolInputStart,
+			fantasy.StreamPartTypeToolInputEnd,
+			fantasy.StreamPartTypeToolCall,
+			fantasy.StreamPartTypeToolResult:
+			if part.ProviderExecuted {
+				providerToolEvents = append(providerToolEvents, part)
+			}
+		case fantasy.StreamPartTypeError:
+			errorParts = append(errorParts, part)
+		}
+	}
+
+	require.Len(t, providerToolEvents, 3)
+	require.Len(t, errorParts, 1)
+	require.NotContains(t, errorParts[0].Error.Error(), "ended without a matching result")
+	require.ErrorContains(t, errorParts[0].Error, "invalid character")
+}
+
 func TestStream_WebSearchResponseRejectsDuplicateProviderOperationIDs(t *testing.T) {
 	t.Parallel()
 
@@ -300,6 +416,16 @@ func anthropicWebSearchMessageStartChunks() []string {
 	return []string{
 		"event: message_start\n",
 		`data: {"type":"message_start","message":{"id":"msg_01WebSearch","type":"message","role":"assistant","model":"claude-sonnet-4-20250514","content":[],"stop_reason":null,"usage":{"input_tokens":100,"output_tokens":0}}}` + "\n\n",
+	}
+}
+
+func anthropicWebSearchMessageDeltaChunks(stopReason string) []string {
+	return []string{
+		"event: message_delta\n",
+		fmt.Sprintf(
+			`data: {"type":"message_delta","delta":{"stop_reason":%q},"usage":{"output_tokens":5}}`,
+			stopReason,
+		) + "\n\n",
 	}
 }
 

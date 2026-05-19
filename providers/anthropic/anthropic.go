@@ -11,6 +11,7 @@ import (
 	"io"
 	"maps"
 	"math"
+	"slices"
 	"strings"
 
 	"charm.land/fantasy"
@@ -439,6 +440,37 @@ func (op providerExecutedOperation) yieldToolCall(yield func(fantasy.StreamPart)
 		ToolCallInput:    op.input,
 		ProviderExecuted: true,
 	})
+}
+
+func appendProviderExecutedOperations(
+	content []fantasy.Content,
+	operations map[string]providerExecutedOperation,
+) []fantasy.Content {
+	for _, id := range slices.Sorted(maps.Keys(operations)) {
+		content = operations[id].appendContent(content)
+	}
+	return content
+}
+
+func yieldProviderExecutedOperations(
+	yield func(fantasy.StreamPart) bool,
+	operations map[string]providerExecutedOperation,
+) bool {
+	for _, id := range slices.Sorted(maps.Keys(operations)) {
+		if !operations[id].yieldToolCall(yield) {
+			return false
+		}
+	}
+	return true
+}
+
+func providerMetadataForStopReason(stopReason string) fantasy.ProviderMetadata {
+	if stopReason == "" {
+		return fantasy.ProviderMetadata{}
+	}
+	return fantasy.ProviderMetadata{
+		Name: &StopReasonMetadata{StopReason: stopReason},
+	}
 }
 
 func firstProviderExecutedOperationID(operations map[string]providerExecutedOperation) string {
@@ -1297,9 +1329,15 @@ func (a languageModel) Generate(ctx context.Context, call fantasy.Call) (*fantas
 	}
 
 	if len(providerExecutedOperations) > 0 {
-		return nil, incompleteProviderExecutedOperationError(
-			firstProviderExecutedOperationID(providerExecutedOperations),
-		)
+		if response.StopReason == "pause_turn" {
+			// Anthropic pause_turn can end with a server_tool_use that has no
+			// result yet. Surface the call so callers can round-trip it.
+			content = appendProviderExecutedOperations(content, providerExecutedOperations)
+		} else {
+			return nil, incompleteProviderExecutedOperationError(
+				firstProviderExecutedOperationID(providerExecutedOperations),
+			)
+		}
 	}
 
 	return &fantasy.Response{
@@ -1312,7 +1350,7 @@ func (a languageModel) Generate(ctx context.Context, call fantasy.Call) (*fantas
 			CacheReadTokens:     response.Usage.CacheReadInputTokens,
 		},
 		FinishReason:     mapFinishReason(string(response.StopReason)),
-		ProviderMetadata: fantasy.ProviderMetadata{},
+		ProviderMetadata: providerMetadataForStopReason(string(response.StopReason)),
 		Warnings:         warnings,
 	}, nil
 }
@@ -1547,9 +1585,18 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 		err := stream.Err()
 		var incompleteErr error
 		if len(providerExecutedOperations) > 0 {
-			incompleteErr = incompleteProviderExecutedOperationError(
-				firstProviderExecutedOperationID(providerExecutedOperations),
-			)
+			if acc.StopReason == "pause_turn" {
+				// Anthropic pause_turn can end with server_tool_use blocks that
+				// have no results yet. Surface the calls so callers can round-trip
+				// the paused response.
+				if !yieldProviderExecutedOperations(yield, providerExecutedOperations) {
+					return
+				}
+			} else {
+				incompleteErr = incompleteProviderExecutedOperationError(
+					firstProviderExecutedOperationID(providerExecutedOperations),
+				)
+			}
 		}
 		if err == nil || errors.Is(err, io.EOF) {
 			if incompleteErr != nil {
@@ -1560,9 +1607,10 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 				return
 			}
 			yield(fantasy.StreamPart{
-				Type:         fantasy.StreamPartTypeFinish,
-				ID:           acc.ID,
-				FinishReason: mapFinishReason(string(acc.StopReason)),
+				Type:             fantasy.StreamPartTypeFinish,
+				ID:               acc.ID,
+				FinishReason:     mapFinishReason(string(acc.StopReason)),
+				ProviderMetadata: providerMetadataForStopReason(string(acc.StopReason)),
 				Usage: fantasy.Usage{
 					InputTokens:         acc.Usage.InputTokens,
 					OutputTokens:        acc.Usage.OutputTokens,
@@ -1570,7 +1618,6 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 					CacheCreationTokens: acc.Usage.CacheCreationInputTokens,
 					CacheReadTokens:     acc.Usage.CacheReadInputTokens,
 				},
-				ProviderMetadata: fantasy.ProviderMetadata{},
 			})
 			return
 		}

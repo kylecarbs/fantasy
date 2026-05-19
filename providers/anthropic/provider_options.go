@@ -29,6 +29,7 @@ const (
 	TypeReasoningOptionMetadata = Name + ".reasoning_metadata"
 	TypeProviderCacheControl    = Name + ".cache_control_options"
 	TypeWebSearchResultMetadata = Name + ".web_search_result_metadata"
+	TypeStopReasonMetadata      = Name + ".stop_reason_metadata"
 )
 
 // Register Anthropic provider-specific types with the global registry.
@@ -56,6 +57,13 @@ func init() {
 	})
 	fantasy.RegisterProviderType(TypeWebSearchResultMetadata, func(data []byte) (fantasy.ProviderOptionsData, error) {
 		var v WebSearchResultMetadata
+		if err := json.Unmarshal(data, &v); err != nil {
+			return nil, err
+		}
+		return &v, nil
+	})
+	fantasy.RegisterProviderType(TypeStopReasonMetadata, func(data []byte) (fantasy.ProviderOptionsData, error) {
+		var v StopReasonMetadata
 		if err := json.Unmarshal(data, &v); err != nil {
 			return nil, err
 		}
@@ -181,6 +189,50 @@ func (m *WebSearchResultMetadata) UnmarshalJSON(data []byte) error {
 	}
 	*m = WebSearchResultMetadata(p)
 	return nil
+}
+
+// StopReasonMetadata stores the raw Anthropic stop reason on a response.
+// This preserves provider-specific terminal states such as pause_turn that
+// collapse into the generic fantasy.FinishReason values.
+type StopReasonMetadata struct {
+	StopReason string `json:"stop_reason"`
+}
+
+// Options implements the ProviderOptions interface.
+func (*StopReasonMetadata) Options() {}
+
+// MarshalJSON implements custom JSON marshaling with type info for StopReasonMetadata.
+func (m StopReasonMetadata) MarshalJSON() ([]byte, error) {
+	type plain StopReasonMetadata
+	return fantasy.MarshalProviderType(TypeStopReasonMetadata, plain(m))
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling with type info for StopReasonMetadata.
+func (m *StopReasonMetadata) UnmarshalJSON(data []byte) error {
+	type plain StopReasonMetadata
+	var p plain
+	if err := fantasy.UnmarshalProviderType(data, &p); err != nil {
+		return err
+	}
+	*m = StopReasonMetadata(p)
+	return nil
+}
+
+// GetStopReasonMetadata extracts Anthropic stop-reason metadata.
+func GetStopReasonMetadata(providerMetadata fantasy.ProviderMetadata) *StopReasonMetadata {
+	if metadata, ok := providerMetadata[Name]; ok {
+		if stopReason, ok := metadata.(*StopReasonMetadata); ok {
+			return stopReason
+		}
+	}
+	return nil
+}
+
+// IsPauseTurnStopReason reports whether provider metadata identifies an
+// Anthropic pause_turn response.
+func IsPauseTurnStopReason(providerMetadata fantasy.ProviderMetadata) bool {
+	metadata := GetStopReasonMetadata(providerMetadata)
+	return metadata != nil && metadata.StopReason == "pause_turn"
 }
 
 // CacheControl represents cache control settings for the Anthropic provider.
