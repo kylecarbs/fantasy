@@ -69,6 +69,10 @@ func testComputerUseTool(t *testing.T) (fantasy.ExecutableProviderTool, *bool) {
 	return tool, called
 }
 
+func int64Ptr(v int64) *int64 {
+	return &v
+}
+
 // TestOpenAIComputerUse tests OpenAI computer use tool support via the
 // agent using the Responses API. Cassettes are stored under
 // testdata/TestOpenAIComputerUse/.
@@ -95,7 +99,7 @@ func TestOpenAIComputerUse(t *testing.T) {
 
 		result, err := agent.Generate(t.Context(), fantasy.AgentCall{
 			Prompt:          "Take a screenshot of the desktop",
-			MaxOutputTokens: new(int64(4000)),
+			MaxOutputTokens: int64Ptr(4000),
 			ProviderOptions: providerOpts,
 		})
 		require.NoError(t, err)
@@ -134,7 +138,7 @@ func TestOpenAIComputerUse(t *testing.T) {
 
 		result, err := agent.Stream(t.Context(), fantasy.AgentStreamCall{
 			Prompt:          "Take a screenshot of the desktop",
-			MaxOutputTokens: new(int64(4000)),
+			MaxOutputTokens: int64Ptr(4000),
 			ProviderOptions: providerOpts,
 		})
 		require.NoError(t, err)
@@ -238,7 +242,7 @@ func TestOpenAIComputerUse_AllActions(t *testing.T) {
 
 	result, err := agent.Generate(t.Context(), fantasy.AgentCall{
 		Prompt:          prompt,
-		MaxOutputTokens: new(int64(16000)),
+		MaxOutputTokens: int64Ptr(16000),
 		ProviderOptions: providerOpts,
 	})
 	require.NoError(t, err)

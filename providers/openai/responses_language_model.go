@@ -177,7 +177,16 @@ func (o responsesLanguageModel) prepareParams(call fantasy.Call) (*responses.Res
 	}
 
 	storeEnabled := openaiOptions != nil && openaiOptions.Store != nil && *openaiOptions.Store
+	allowOrphanFunctionOutputs := openaiOptions != nil && openaiOptions.PreviousResponseID != nil && *openaiOptions.PreviousResponseID != ""
 	input, inputWarnings, err := toResponsesPrompt(call.Prompt, modelConfig.systemMessageMode, storeEnabled)
+	if allowOrphanFunctionOutputs {
+		input, inputWarnings, err = toResponsesPromptWithValidation(
+			call.Prompt,
+			modelConfig.systemMessageMode,
+			storeEnabled,
+			true,
+		)
+	}
 	warnings = append(warnings, inputWarnings...)
 	if err != nil {
 		return nil, warnings, err
@@ -401,6 +410,15 @@ func responsesUsage(resp responses.Response) fantasy.Usage {
 }
 
 func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bool) (responses.ResponseInputParam, []fantasy.CallWarning, error) {
+	return toResponsesPromptWithValidation(prompt, systemMessageMode, store, false)
+}
+
+func toResponsesPromptWithValidation(
+	prompt fantasy.Prompt,
+	systemMessageMode string,
+	store bool,
+	allowOrphanFunctionOutputs bool,
+) (responses.ResponseInputParam, []fantasy.CallWarning, error) {
 	var input responses.ResponseInputParam
 	var warnings []fantasy.CallWarning
 
@@ -741,7 +759,7 @@ func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bo
 		}
 	}
 
-	if err := validateResponsesInput(input); err != nil {
+	if err := validateResponsesInputWithOptions(input, allowOrphanFunctionOutputs); err != nil {
 		return nil, warnings, err
 	}
 
@@ -758,6 +776,13 @@ func validateResponsesInput(input responses.ResponseInputParam) error {
 		return err
 	}
 	return validateResponsesItemReferences(input)
+}
+
+func validateResponsesInputWithOptions(input responses.ResponseInputParam, allowOrphanFunctionOutputs bool) error {
+	if allowOrphanFunctionOutputs {
+		return validateResponsesItemReferences(input)
+	}
+	return validateResponsesInput(input)
 }
 
 func validateResponsesFunctionCallOutputs(input responses.ResponseInputParam) error {

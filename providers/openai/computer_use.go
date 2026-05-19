@@ -11,12 +11,12 @@ import (
 
 const computerUseToolID = "openai.computer_use"
 
-// Type identifier for computer use metadata, registered in
-// responses_options.go init().
+// TypeComputerUseMetadata is the type identifier for computer use metadata,
+// registered in responses_options.go init().
 const TypeComputerUseMetadata = Name + ".responses.computer_use_metadata"
 
-// Type identifier for computer call output options, registered in
-// responses_options.go init().
+// TypeComputerCallOutputOptions is the type identifier for computer call
+// output options, registered in responses_options.go init().
 const TypeComputerCallOutputOptions = Name + ".responses.computer_call_output_options"
 
 // ComputerUseMetadata stores the raw wire-format JSON of a computer_call
