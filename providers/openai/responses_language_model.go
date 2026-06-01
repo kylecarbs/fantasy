@@ -166,7 +166,8 @@ func (o responsesLanguageModel) prepareParams(call fantasy.Call) (*responses.Res
 		params.Store = param.NewOpt(false)
 	}
 
-	if openaiOptions != nil && openaiOptions.PreviousResponseID != nil && *openaiOptions.PreviousResponseID != "" {
+	previousResponseID := openaiOptions != nil && openaiOptions.PreviousResponseID != nil && *openaiOptions.PreviousResponseID != ""
+	if previousResponseID {
 		if err := validatePreviousResponseIDPrompt(call.Prompt); err != nil {
 			return nil, warnings, err
 		}
@@ -177,7 +178,7 @@ func (o responsesLanguageModel) prepareParams(call fantasy.Call) (*responses.Res
 	}
 
 	storeEnabled := openaiOptions != nil && openaiOptions.Store != nil && *openaiOptions.Store
-	input, inputWarnings, err := toResponsesPrompt(call.Prompt, modelConfig.systemMessageMode, storeEnabled)
+	input, inputWarnings, err := toResponsesPrompt(call.Prompt, modelConfig.systemMessageMode, storeEnabled, previousResponseID)
 	warnings = append(warnings, inputWarnings...)
 	if err != nil {
 		return nil, warnings, err
@@ -400,7 +401,7 @@ func responsesUsage(resp responses.Response) fantasy.Usage {
 	return usage
 }
 
-func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bool) (responses.ResponseInputParam, []fantasy.CallWarning, error) {
+func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bool, previousResponseID bool) (responses.ResponseInputParam, []fantasy.CallWarning, error) {
 	var input responses.ResponseInputParam
 	var warnings []fantasy.CallWarning
 
@@ -741,7 +742,7 @@ func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bo
 		}
 	}
 
-	if err := validateResponsesInput(input); err != nil {
+	if err := validateResponsesInput(input, previousResponseID); err != nil {
 		return nil, warnings, err
 	}
 
@@ -753,14 +754,14 @@ func isResponsesWebSearchToolCall(toolCallPart fantasy.ToolCallPart) bool {
 		toolCallPart.ToolName == "web_search_preview"
 }
 
-func validateResponsesInput(input responses.ResponseInputParam) error {
-	if err := validateResponsesFunctionCallOutputs(input); err != nil {
+func validateResponsesInput(input responses.ResponseInputParam, previousResponseID bool) error {
+	if err := validateResponsesFunctionCallOutputs(input, previousResponseID); err != nil {
 		return err
 	}
 	return validateResponsesItemReferences(input)
 }
 
-func validateResponsesFunctionCallOutputs(input responses.ResponseInputParam) error {
+func validateResponsesFunctionCallOutputs(input responses.ResponseInputParam, previousResponseID bool) error {
 	type callState struct {
 		calls       int
 		outputs     int
@@ -818,6 +819,9 @@ func validateResponsesFunctionCallOutputs(input responses.ResponseInputParam) er
 	for _, callID := range outputIDs {
 		state := states[callID]
 		if state.calls == 0 {
+			if previousResponseID {
+				continue
+			}
 			return fmt.Errorf("openai responses prompt has function_call_output without function_call for call_id %q", callID)
 		}
 		if state.firstOutput < state.firstCall {

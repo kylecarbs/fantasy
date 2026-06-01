@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 
 	"charm.land/fantasy"
@@ -47,6 +48,19 @@ func PrepareCallFunc(_ fantasy.LanguageModel, params *openaisdk.ChatCompletionNe
 	if providerOptions.User != nil {
 		params.User = param.NewOpt(*providerOptions.User)
 	}
+	if providerOptions.ParallelToolCalls != nil {
+		params.ParallelToolCalls = param.NewOpt(*providerOptions.ParallelToolCalls)
+	}
+	if providerOptions.MaxCompletionTokens != nil {
+		params.MaxCompletionTokens = param.NewOpt(*providerOptions.MaxCompletionTokens)
+	}
+	if providerOptions.PromptCacheKey != nil {
+		params.PromptCacheKey = param.NewOpt(*providerOptions.PromptCacheKey)
+	}
+
+	extraFields := make(map[string]any)
+	maps.Copy(extraFields, providerOptions.ExtraBody)
+	params.SetExtraFields(extraFields)
 	return nil, nil
 }
 

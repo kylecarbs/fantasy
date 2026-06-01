@@ -5,8 +5,54 @@ import (
 	"testing"
 
 	"charm.land/fantasy"
+	openaisdk "github.com/charmbracelet/openai-go"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPrepareCallFunc_ProviderOptions(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should set chat completion provider options", func(t *testing.T) {
+		t.Parallel()
+
+		params := openaisdk.ChatCompletionNewParams{}
+		warnings, err := PrepareCallFunc(nil, &params, fantasy.Call{
+			ProviderOptions: NewProviderOptions(&ProviderOptions{
+				ParallelToolCalls:   fantasy.Opt(false),
+				MaxCompletionTokens: fantasy.Opt(int64(255)),
+				PromptCacheKey:      fantasy.Opt("test-cache-key-123"),
+				ExtraBody: map[string]any{
+					"custom_field": "custom-value",
+				},
+			}),
+		})
+
+		require.NoError(t, err)
+		require.Empty(t, warnings)
+		require.True(t, params.ParallelToolCalls.Valid())
+		require.Equal(t, false, params.ParallelToolCalls.Value)
+		require.True(t, params.MaxCompletionTokens.Valid())
+		require.Equal(t, int64(255), params.MaxCompletionTokens.Value)
+		require.True(t, params.PromptCacheKey.Valid())
+		require.Equal(t, "test-cache-key-123", params.PromptCacheKey.Value)
+		require.Equal(t, map[string]any{
+			"custom_field": "custom-value",
+		}, params.ExtraFields())
+	})
+
+	t.Run("should leave unset chat completion provider options invalid", func(t *testing.T) {
+		t.Parallel()
+
+		params := openaisdk.ChatCompletionNewParams{}
+		warnings, err := PrepareCallFunc(nil, &params, fantasy.Call{})
+
+		require.NoError(t, err)
+		require.Empty(t, warnings)
+		require.False(t, params.ParallelToolCalls.Valid())
+		require.False(t, params.MaxCompletionTokens.Valid())
+		require.False(t, params.PromptCacheKey.Valid())
+	})
+}
 
 func TestToPromptFunc_ReasoningContent(t *testing.T) {
 	t.Parallel()

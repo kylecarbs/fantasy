@@ -26,8 +26,13 @@ func init() {
 
 // ProviderOptions represents additional options for the OpenAI-compatible provider.
 type ProviderOptions struct {
-	User            *string                 `json:"user"`
-	ReasoningEffort *openai.ReasoningEffort `json:"reasoning_effort"`
+	User                *string                 `json:"user"`
+	ParallelToolCalls   *bool                   `json:"parallel_tool_calls"`
+	ReasoningEffort     *openai.ReasoningEffort `json:"reasoning_effort"`
+	MaxCompletionTokens *int64                  `json:"max_completion_tokens"`
+	PromptCacheKey      *string                 `json:"prompt_cache_key"`
+	// ExtraBody contains additional request body fields.
+	ExtraBody map[string]any `json:"extra_body,omitempty"`
 }
 
 // ReasoningData represents reasoning data for OpenAI-compatible provider.

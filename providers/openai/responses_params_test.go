@@ -471,7 +471,7 @@ func TestPrepareParams_ValidatesFunctionCallOutputPairing(t *testing.T) {
 
 		input, warnings, err := toResponsesPrompt(fantasy.Prompt{
 			testResponsesProviderToolResultMessage("ws_01"),
-		}, "system", false)
+		}, "system", false, false)
 		require.NoError(t, err)
 		require.Empty(t, warnings)
 		require.Empty(t, input)
@@ -498,7 +498,7 @@ func TestValidateResponsesInput_WebSearchReferenceRequiresReasoning(t *testing.T
 		err := validateResponsesInput(responses.ResponseInputParam{
 			responses.ResponseInputItemParamOfItemReference("rs_valid"),
 			responses.ResponseInputItemParamOfItemReference("ws_valid"),
-		})
+		}, false)
 		require.NoError(t, err)
 	})
 
@@ -507,7 +507,7 @@ func TestValidateResponsesInput_WebSearchReferenceRequiresReasoning(t *testing.T
 
 		err := validateResponsesInput(responses.ResponseInputParam{
 			responses.ResponseInputItemParamOfItemReference("ws_orphan"),
-		})
+		}, false)
 		require.EqualError(t, err, `openai responses prompt has web_search_call item_reference without preceding reasoning item_reference for item_id "ws_orphan"`)
 	})
 
@@ -518,7 +518,7 @@ func TestValidateResponsesInput_WebSearchReferenceRequiresReasoning(t *testing.T
 			responses.ResponseInputItemParamOfItemReference("rs_valid"),
 			responses.ResponseInputItemParamOfMessage("text", responses.EasyInputMessageRoleAssistant),
 			responses.ResponseInputItemParamOfItemReference("ws_orphan"),
-		})
+		}, false)
 		require.EqualError(t, err, `openai responses prompt has web_search_call item_reference without preceding reasoning item_reference for item_id "ws_orphan"`)
 	})
 }
