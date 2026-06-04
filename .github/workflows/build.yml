@@ -5,7 +5,7 @@ jobs:
   build:
     uses: charmbracelet/meta/.github/workflows/build.yml@main
     with:
-      go-version: ""
+      go-version: "1.26.4"
       go-version-file: ./go.mod
     secrets:
       gh_pat: "${{ secrets.PERSONAL_ACCESS_TOKEN }}"
