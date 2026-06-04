@@ -271,6 +271,7 @@ func TestToPrompt_DropsEmptyMessages(t *testing.T) {
 				Role: fantasy.MessageRoleUser,
 				Content: []fantasy.MessagePart{
 					fantasy.FilePart{
+						Filename:  "quarterly_report.v1.pdf",
 						Data:      []byte("fake pdf data"),
 						MediaType: "application/pdf",
 					},
@@ -282,10 +283,67 @@ func TestToPrompt_DropsEmptyMessages(t *testing.T) {
 
 		require.Empty(t, systemBlocks)
 		require.Len(t, messages, 1)
+		require.Len(t, messages[0].Content, 1)
+		require.NotNil(t, messages[0].Content[0].OfDocument)
+		require.Equal(t, "quarterly report v1 pdf", messages[0].Content[0].OfDocument.Title.Value)
+		require.True(t, messages[0].Content[0].OfDocument.Title.Valid())
+		require.Empty(t, warnings)
+	})
+
+	t.Run("should fall back to Document title when PDF filename is missing", func(t *testing.T) {
+		t.Parallel()
+
+		prompt := fantasy.Prompt{
+			{
+				Role: fantasy.MessageRoleUser,
+				Content: []fantasy.MessagePart{
+					fantasy.FilePart{
+						Data:      []byte("fake pdf data"),
+						MediaType: "application/pdf",
+					},
+				},
+			},
+		}
+
+		systemBlocks, messages, warnings := toPrompt(prompt, true)
+
+		require.Empty(t, systemBlocks)
+		require.Len(t, messages, 1)
+		require.Len(t, messages[0].Content, 1)
+		require.NotNil(t, messages[0].Content[0].OfDocument)
+		require.Equal(t, "Document", messages[0].Content[0].OfDocument.Title.Value)
+		require.True(t, messages[0].Content[0].OfDocument.Title.Valid())
 		require.Empty(t, warnings)
 	})
 
 	t.Run("should keep user messages with text document content", func(t *testing.T) {
+		t.Parallel()
+
+		prompt := fantasy.Prompt{
+			{
+				Role: fantasy.MessageRoleUser,
+				Content: []fantasy.MessagePart{
+					fantasy.FilePart{
+						Filename:  "notes_v1.md",
+						Data:      []byte("# Hello World\nSome markdown content"),
+						MediaType: "text/markdown",
+					},
+				},
+			},
+		}
+
+		systemBlocks, messages, warnings := toPrompt(prompt, true)
+
+		require.Empty(t, systemBlocks)
+		require.Len(t, messages, 1)
+		require.Len(t, messages[0].Content, 1)
+		require.NotNil(t, messages[0].Content[0].OfDocument)
+		require.Equal(t, "notes v1 md", messages[0].Content[0].OfDocument.Title.Value)
+		require.True(t, messages[0].Content[0].OfDocument.Title.Valid())
+		require.Empty(t, warnings)
+	})
+
+	t.Run("should fall back to Document title when text filename is missing", func(t *testing.T) {
 		t.Parallel()
 
 		prompt := fantasy.Prompt{
@@ -304,7 +362,38 @@ func TestToPrompt_DropsEmptyMessages(t *testing.T) {
 
 		require.Empty(t, systemBlocks)
 		require.Len(t, messages, 1)
+		require.Len(t, messages[0].Content, 1)
+		require.NotNil(t, messages[0].Content[0].OfDocument)
+		require.Equal(t, "Document", messages[0].Content[0].OfDocument.Title.Value)
+		require.True(t, messages[0].Content[0].OfDocument.Title.Valid())
 		require.Empty(t, warnings)
+	})
+
+	t.Run("should warn on unsupported file media type while keeping visible content", func(t *testing.T) {
+		t.Parallel()
+
+		prompt := fantasy.Prompt{
+			{
+				Role: fantasy.MessageRoleUser,
+				Content: []fantasy.MessagePart{
+					fantasy.TextPart{Text: "look at this archive"},
+					fantasy.FilePart{
+						Filename:  "logs.zip",
+						Data:      []byte("not supported"),
+						MediaType: "application/zip",
+					},
+				},
+			},
+		}
+
+		systemBlocks, messages, warnings := toPrompt(prompt, true)
+
+		require.Empty(t, systemBlocks)
+		require.Len(t, messages, 1)
+		require.Len(t, warnings, 1)
+		require.Equal(t, fantasy.CallWarningTypeOther, warnings[0].Type)
+		require.Contains(t, warnings[0].Message, "application/zip")
+		require.Contains(t, warnings[0].Message, "not supported")
 	})
 
 	t.Run("should drop user messages without visible content", func(t *testing.T) {
@@ -326,10 +415,13 @@ func TestToPrompt_DropsEmptyMessages(t *testing.T) {
 
 		require.Empty(t, systemBlocks)
 		require.Empty(t, messages)
-		require.Len(t, warnings, 1)
+		require.Len(t, warnings, 2)
 		require.Equal(t, fantasy.CallWarningTypeOther, warnings[0].Type)
-		require.Contains(t, warnings[0].Message, "dropping empty user message")
-		require.Contains(t, warnings[0].Message, "neither user-facing content nor tool results")
+		require.Contains(t, warnings[0].Message, "application/zip")
+		require.Contains(t, warnings[0].Message, "not supported")
+		require.Equal(t, fantasy.CallWarningTypeOther, warnings[1].Type)
+		require.Contains(t, warnings[1].Message, "dropping empty user message")
+		require.Contains(t, warnings[1].Message, "neither user-facing content nor tool results")
 	})
 
 	t.Run("should keep user messages with tool results", func(t *testing.T) {
