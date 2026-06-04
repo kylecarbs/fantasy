@@ -42,6 +42,11 @@ func betaRequestOptions(flags []string) []option.RequestOption {
 // by Generate and Stream: user-agent, raw tool injection, and any
 // beta API flags.
 func buildRequestOptions(call fantasy.Call, rawTools []json.RawMessage, betaFlags []string) []option.RequestOption {
+	providerOptions := &ProviderOptions{}
+	if v, ok := call.ProviderOptions[Name]; ok {
+		providerOptions, _ = v.(*ProviderOptions)
+	}
+
 	reqOpts := callUARequestOptions(call)
 	if len(rawTools) > 0 {
 		// Tools are injected as raw JSON rather than via params.Tools
@@ -49,6 +54,9 @@ func buildRequestOptions(call fantasy.Call, rawTools []json.RawMessage, betaFlag
 		// use). If the SDK adds validation that reads params.Tools,
 		// this will need updating.
 		reqOpts = append(reqOpts, option.WithJSONSet("tools", rawTools))
+	}
+	for k, v := range providerOptions.ExtraBody {
+		reqOpts = append(reqOpts, option.WithJSONSet(k, v))
 	}
 	if len(betaFlags) > 0 {
 		reqOpts = append(reqOpts, betaRequestOptions(betaFlags)...)
@@ -85,7 +93,8 @@ type options struct {
 	vertexLocation string
 	skipAuth       bool
 
-	useBedrock bool
+	useBedrock    bool
+	bedrockRegion string
 
 	objectMode fantasy.ObjectMode
 }
@@ -147,6 +156,13 @@ func WithSkipAuth(skip bool) Option {
 func WithBedrock() Option {
 	return func(o *options) {
 		o.useBedrock = true
+	}
+}
+
+// WithBedrockRegion sets the AWS region for the Bedrock provider.
+func WithBedrockRegion(region string) Option {
+	return func(o *options) {
+		o.bedrockRegion = region
 	}
 }
 
@@ -231,15 +247,14 @@ func (a *provider) LanguageModel(ctx context.Context, modelID string) (fantasy.L
 		)
 	}
 	if a.options.useBedrock {
-		modelID = bedrockPrefixModelWithRegion(modelID)
-
 		if a.options.skipAuth || a.options.apiKey != "" {
 			clientOptions = append(
 				clientOptions,
-				bedrock.WithConfig(bedrockBasicAuthConfig(a.options.apiKey)),
+				bedrock.WithConfig(bedrockBasicAuthConfig(a.options.apiKey, a.options.bedrockRegion)),
 			)
 		} else {
 			if cfg, err := config.LoadDefaultConfig(ctx); err == nil {
+				cfg.Region = cmp.Or(a.options.bedrockRegion, cfg.Region)
 				clientOptions = append(
 					clientOptions,
 					bedrock.WithConfig(cfg),
@@ -475,21 +490,15 @@ func webSearchResultMetadataForEncode(options fantasy.ProviderOptions) (*WebSear
 	return metadata, nil
 }
 
-func reasoningEndProviderMetadata(contentBlock anthropic.ContentBlockUnion) fantasy.ProviderMetadata {
-	switch contentBlock.Type {
-	case "thinking":
-		if contentBlock.Signature == "" {
-			return nil
-		}
+func reasoningProviderMetadata(signature, redactedData string) fantasy.ProviderMetadata {
+	switch {
+	case signature != "":
 		return fantasy.ProviderMetadata{
-			Name: &ReasoningOptionMetadata{Signature: contentBlock.Signature},
+			Name: &ReasoningOptionMetadata{Signature: signature},
 		}
-	case "redacted_thinking":
-		if contentBlock.Data == "" {
-			return nil
-		}
+	case redactedData != "":
 		return fantasy.ProviderMetadata{
-			Name: &ReasoningOptionMetadata{RedactedData: contentBlock.Data},
+			Name: &ReasoningOptionMetadata{RedactedData: redactedData},
 		}
 	default:
 		return nil
@@ -1093,10 +1102,9 @@ func toPrompt(prompt fantasy.Prompt, sendReasoningData bool) ([]anthropic.TextBl
 						if toolCall.ProviderExecuted {
 							// Reconstruct server_tool_use block for
 							// multi-turn round-tripping.
-							var inputAny any
-							err := json.Unmarshal([]byte(toolCall.Input), &inputAny)
-							if err != nil {
-								continue
+							inputAny, warning := decodeToolCallInputAny(toolCall)
+							if warning != nil {
+								warnings = append(warnings, *warning)
 							}
 							anthropicContent = append(anthropicContent, anthropic.ContentBlockParamUnion{
 								OfServerToolUse: &anthropic.ServerToolUseBlockParam{
@@ -1107,10 +1115,9 @@ func toPrompt(prompt fantasy.Prompt, sendReasoningData bool) ([]anthropic.TextBl
 							})
 							continue
 						}
-						var inputMap map[string]any
-						err := json.Unmarshal([]byte(toolCall.Input), &inputMap)
-						if err != nil {
-							continue
+						inputMap, warning := decodeToolCallInputMap(toolCall)
+						if warning != nil {
+							warnings = append(warnings, *warning)
 						}
 						toolUseBlock := anthropic.NewToolUseBlock(toolCall.ToolCallID, inputMap, toolCall.ToolName)
 						if cacheControl != nil {
@@ -1123,8 +1130,9 @@ func toPrompt(prompt fantasy.Prompt, sendReasoningData bool) ([]anthropic.TextBl
 							continue
 						}
 						if result.ProviderExecuted {
-							// Reconstruct web_search_tool_result block
-							// with encrypted_content for round-tripping.
+							// Reconstruct web_search_tool_result blocks,
+							// including encrypted content and errors, for
+							// round-tripping.
 							searchMeta, warning := webSearchResultMetadataForEncode(result.ProviderOptions)
 							if warning != nil {
 								warnings = append(warnings, *warning)
@@ -1167,6 +1175,52 @@ func hasVisibleAssistantContent(content []anthropic.ContentBlockParamUnion) bool
 		}
 	}
 	return false
+}
+
+// decodeToolCallInputMap unmarshals a ToolCallPart.Input into a map for
+// reconstructing an Anthropic tool_use block. The Anthropic API rejects any
+// request whose tool_result lacks a matching tool_use in the previous
+// message, so this helper never drops the block: empty input becomes {},
+// and malformed input falls back to {} with a CallWarning. The caller still
+// emits a tool_use block with the original ToolCallID, preserving the pair.
+func decodeToolCallInputMap(toolCall fantasy.ToolCallPart) (map[string]any, *fantasy.CallWarning) {
+	if strings.TrimSpace(toolCall.Input) == "" {
+		return map[string]any{}, nil
+	}
+	var inputMap map[string]any
+	if err := json.Unmarshal([]byte(toolCall.Input), &inputMap); err != nil {
+		return map[string]any{}, &fantasy.CallWarning{
+			Type: fantasy.CallWarningTypeOther,
+			Message: fmt.Sprintf(
+				"tool call %q has malformed input JSON; emitting empty arguments to preserve tool_use ↔ tool_result pairing: %s",
+				toolCall.ToolCallID, err,
+			),
+		}
+	}
+	if inputMap == nil {
+		return map[string]any{}, nil
+	}
+	return inputMap, nil
+}
+
+// decodeToolCallInputAny is the server_tool_use counterpart to
+// decodeToolCallInputMap. ServerToolUseBlockParam.Input has type `any` so
+// nil is acceptable for the empty case.
+func decodeToolCallInputAny(toolCall fantasy.ToolCallPart) (any, *fantasy.CallWarning) {
+	if strings.TrimSpace(toolCall.Input) == "" {
+		return nil, nil
+	}
+	var inputAny any
+	if err := json.Unmarshal([]byte(toolCall.Input), &inputAny); err != nil {
+		return nil, &fantasy.CallWarning{
+			Type: fantasy.CallWarningTypeOther,
+			Message: fmt.Sprintf(
+				"server tool call %q has malformed input JSON; emitting empty arguments to preserve tool_use ↔ tool_result pairing: %s",
+				toolCall.ToolCallID, err,
+			),
+		}
+	}
+	return inputAny, nil
 }
 
 // buildWebSearchToolResultBlock constructs an Anthropic
@@ -1231,6 +1285,9 @@ func (a languageModel) Generate(ctx context.Context, call fantasy.Call) (*fantas
 	response, err := a.client.Messages.New(ctx, *params, reqOpts...)
 	if err != nil {
 		return nil, toProviderErr(err)
+	}
+	if response == nil {
+		return nil, &fantasy.Error{Title: "no response", Message: "provider returned nil response"}
 	}
 
 	var content []fantasy.Content
@@ -1366,7 +1423,6 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 
 	stream := a.client.Messages.NewStreaming(ctx, *params, reqOpts...)
 	acc := anthropic.Message{}
-	var sawMessageStop bool
 	return func(yield func(fantasy.StreamPart) bool) {
 		if len(warnings) > 0 {
 			if !yield(fantasy.StreamPart{
@@ -1376,6 +1432,8 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 				return
 			}
 		}
+
+		sawMessageStop := false
 
 		for stream.Next() {
 			chunk := stream.Current()
@@ -1400,13 +1458,9 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 					}
 				case "redacted_thinking":
 					if !yield(fantasy.StreamPart{
-						Type: fantasy.StreamPartTypeReasoningStart,
-						ID:   fmt.Sprintf("%d", chunk.Index),
-						ProviderMetadata: fantasy.ProviderMetadata{
-							Name: &ReasoningOptionMetadata{
-								RedactedData: chunk.ContentBlock.Data,
-							},
-						},
+						Type:             fantasy.StreamPartTypeReasoningStart,
+						ID:               fmt.Sprintf("%d", chunk.Index),
+						ProviderMetadata: reasoningProviderMetadata("", chunk.ContentBlock.Data),
 					}) {
 						return
 					}
@@ -1447,7 +1501,7 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 					if !yield(fantasy.StreamPart{
 						Type:             fantasy.StreamPartTypeReasoningEnd,
 						ID:               fmt.Sprintf("%d", chunk.Index),
-						ProviderMetadata: reasoningEndProviderMetadata(contentBlock),
+						ProviderMetadata: reasoningProviderMetadata(contentBlock.Signature, ""),
 					}) {
 						return
 					}
@@ -1455,7 +1509,7 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 					if !yield(fantasy.StreamPart{
 						Type:             fantasy.StreamPartTypeReasoningEnd,
 						ID:               fmt.Sprintf("%d", chunk.Index),
-						ProviderMetadata: reasoningEndProviderMetadata(contentBlock),
+						ProviderMetadata: reasoningProviderMetadata("", contentBlock.Data),
 					}) {
 						return
 					}
@@ -1589,38 +1643,42 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 		}
 
 		err := stream.Err()
-		if err == nil || errors.Is(err, io.EOF) {
-			if !sawMessageStop {
-				if err == nil {
-					err = io.EOF
-				}
-				yield(fantasy.StreamPart{
-					Type:  fantasy.StreamPartTypeError,
-					Error: fmt.Errorf("anthropic stream closed before message_stop: %w", err),
-				})
-				return
-			}
-			yield(fantasy.StreamPart{
-				Type:         fantasy.StreamPartTypeFinish,
-				ID:           acc.ID,
-				FinishReason: mapFinishReason(string(acc.StopReason)),
-				Usage: fantasy.Usage{
-					InputTokens:         acc.Usage.InputTokens,
-					OutputTokens:        acc.Usage.OutputTokens,
-					TotalTokens:         acc.Usage.InputTokens + acc.Usage.OutputTokens,
-					CacheCreationTokens: acc.Usage.CacheCreationInputTokens,
-					CacheReadTokens:     acc.Usage.CacheReadInputTokens,
-				},
-				ProviderMetadata: fantasy.ProviderMetadata{},
-			})
-			return
-		} else { //nolint: revive
+		if err != nil && !errors.Is(err, io.EOF) {
 			yield(fantasy.StreamPart{
 				Type:  fantasy.StreamPartTypeError,
 				Error: toProviderErr(err),
 			})
 			return
 		}
+
+		// Anthropic's SSE protocol reports the stop_reason in message_delta
+		// and then terminates the message with message_stop. Require both so
+		// a socket close after only one of those signals is retried.
+		if !sawMessageStop || acc.StopReason == "" {
+			err := ctx.Err()
+			if err == nil {
+				err = fantasy.NewIncompleteStreamError()
+			}
+			yield(fantasy.StreamPart{
+				Type:  fantasy.StreamPartTypeError,
+				Error: err,
+			})
+			return
+		}
+
+		yield(fantasy.StreamPart{
+			Type:         fantasy.StreamPartTypeFinish,
+			ID:           acc.ID,
+			FinishReason: mapFinishReason(string(acc.StopReason)),
+			Usage: fantasy.Usage{
+				InputTokens:         acc.Usage.InputTokens,
+				OutputTokens:        acc.Usage.OutputTokens,
+				TotalTokens:         acc.Usage.InputTokens + acc.Usage.OutputTokens,
+				CacheCreationTokens: acc.Usage.CacheCreationInputTokens,
+				CacheReadTokens:     acc.Usage.CacheReadInputTokens,
+			},
+			ProviderMetadata: fantasy.ProviderMetadata{},
+		})
 	}, nil
 }
 

@@ -177,9 +177,14 @@ func TestToPrompt_DropsEmptyMessages(t *testing.T) {
 		require.Empty(t, warnings)
 	})
 
-	t.Run("should drop assistant messages with invalid tool input", func(t *testing.T) {
+	t.Run("should preserve tool_use block when input JSON is malformed", func(t *testing.T) {
 		t.Parallel()
 
+		// Anthropic's API rejects any request whose tool_result lacks a
+		// matching tool_use in the previous message. Dropping the tool_use
+		// because its input failed to parse leaves the next turn's
+		// tool_result orphaned and produces a 400. Emit the block with
+		// empty arguments instead, and surface the parse error as a warning.
 		prompt := fantasy.Prompt{
 			{
 				Role: fantasy.MessageRoleUser,
@@ -202,10 +207,56 @@ func TestToPrompt_DropsEmptyMessages(t *testing.T) {
 		systemBlocks, messages, warnings := toPrompt(prompt, true)
 
 		require.Empty(t, systemBlocks)
-		require.Len(t, messages, 1, "should only have user message")
+		require.Len(t, messages, 2, "user + assistant — assistant must be preserved so tool_result can pair")
+		assistant := messages[1]
+		require.Equal(t, anthropic.MessageParamRoleAssistant, assistant.Role)
+		require.Len(t, assistant.Content, 1)
+		toolUse := assistant.Content[0].OfToolUse
+		require.NotNil(t, toolUse, "tool_use block should be emitted even when input is malformed")
+		require.Equal(t, "call_123", toolUse.ID)
+		require.Equal(t, "get_weather", toolUse.Name)
 		require.Len(t, warnings, 1)
 		require.Equal(t, fantasy.CallWarningTypeOther, warnings[0].Type)
-		require.Contains(t, warnings[0].Message, "dropping empty assistant message")
+		require.Contains(t, warnings[0].Message, "malformed input JSON")
+		require.Contains(t, warnings[0].Message, "call_123")
+	})
+
+	t.Run("should preserve tool_use block when input is empty", func(t *testing.T) {
+		t.Parallel()
+
+		// Some upstream providers (notably DeepSeek's anthropic-compat
+		// endpoint) emit tool_use blocks with empty input for parameterless
+		// tool calls. Treat empty input as {} rather than dropping the
+		// block, since the next turn's tool_result still needs its pair.
+		prompt := fantasy.Prompt{
+			{
+				Role: fantasy.MessageRoleUser,
+				Content: []fantasy.MessagePart{
+					fantasy.TextPart{Text: "Hi"},
+				},
+			},
+			{
+				Role: fantasy.MessageRoleAssistant,
+				Content: []fantasy.MessagePart{
+					fantasy.ToolCallPart{
+						ToolCallID: "call_empty",
+						ToolName:   "ping",
+						Input:      "",
+					},
+				},
+			},
+		}
+
+		systemBlocks, messages, warnings := toPrompt(prompt, true)
+
+		require.Empty(t, systemBlocks)
+		require.Empty(t, warnings, "empty input is a valid round-trip; no warning")
+		require.Len(t, messages, 2)
+		require.Equal(t, anthropic.MessageParamRoleAssistant, messages[1].Role)
+		toolUse := messages[1].Content[0].OfToolUse
+		require.NotNil(t, toolUse)
+		require.Equal(t, "call_empty", toolUse.ID)
+		require.Equal(t, "ping", toolUse.Name)
 	})
 
 	t.Run("should keep assistant messages with reasoning and text", func(t *testing.T) {
@@ -649,17 +700,19 @@ func TestStream_RequiresMessageStopBeforeFinish(t *testing.T) {
 		anthropicSSEEvent("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`),
 		anthropicSSEEvent("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}`),
 		anthropicSSEEvent("content_block_stop", `{"type":"content_block_stop","index":0}`),
-		anthropicSSEEvent("message_delta", `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":1,"output_tokens":1}}`),
+		anthropicSSEEvent("message_delta", `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}`),
 		anthropicSSEEvent("message_stop", `{"type":"message_stop"}`),
 	}
-	truncatedTextStream := completeTextStream[:len(completeTextStream)-1]
+
+	missingStopReasonStream := append([]string(nil), completeTextStream[:len(completeTextStream)-2]...)
+	missingStopReasonStream = append(missingStopReasonStream, completeTextStream[len(completeTextStream)-1])
 
 	tests := []struct {
-		name       string
-		chunks     []string
-		wantFinish bool
-		wantEOF    bool
-		wantError  string
+		name           string
+		chunks         []string
+		wantFinish     bool
+		wantRetryable  bool
+		wantErrContain string
 	}{
 		{
 			name:       "complete stream finishes",
@@ -667,20 +720,21 @@ func TestStream_RequiresMessageStopBeforeFinish(t *testing.T) {
 			wantFinish: true,
 		},
 		{
-			name:    "eof before message_stop returns EOF error",
-			chunks:  truncatedTextStream,
-			wantEOF: true,
+			name:          "message_stop without stop_reason errors",
+			chunks:        missingStopReasonStream,
+			wantRetryable: true,
 		},
 		{
-			name:    "empty stream returns EOF error",
-			wantEOF: true,
+			name:          "text stream closed before message_stop errors",
+			chunks:        completeTextStream[:len(completeTextStream)-1],
+			wantRetryable: true,
 		},
 		{
-			name: "error event keeps existing error path",
+			name: "provider error event is preserved",
 			chunks: []string{
-				anthropicSSEEvent("error", `{"type":"error","error":{"type":"overloaded_error","message":"stream down"}}`),
+				anthropicSSEEvent("error", `{"type":"error","error":{"type":"api_error","message":"stream down"}}`),
 			},
-			wantError: "stream down",
+			wantErrContain: "stream down",
 		},
 	}
 
@@ -700,33 +754,46 @@ func TestStream_RequiresMessageStopBeforeFinish(t *testing.T) {
 			model, err := provider.LanguageModel(context.Background(), "claude-sonnet-4-20250514")
 			require.NoError(t, err)
 
-			stream, err := model.Stream(context.Background(), fantasy.Call{
-				Prompt: testPrompt(),
-			})
+			stream, err := model.Stream(context.Background(), fantasy.Call{Prompt: testPrompt()})
 			require.NoError(t, err)
 
 			parts := collectAnthropicStreamParts(stream)
 			_ = awaitAnthropicCall(t, calls)
 
-			finishParts := streamPartsByType(parts, fantasy.StreamPartTypeFinish)
-			errorParts := streamPartsByType(parts, fantasy.StreamPartTypeError)
+			var finishes, errorParts []fantasy.StreamPart
+			for _, part := range parts {
+				switch part.Type {
+				case fantasy.StreamPartTypeFinish:
+					finishes = append(finishes, part)
+				case fantasy.StreamPartTypeError:
+					errorParts = append(errorParts, part)
+				}
+			}
 
 			if tt.wantFinish {
-				require.Len(t, finishParts, 1)
+				require.Len(t, finishes, 1)
 				require.Empty(t, errorParts)
-				require.Equal(t, fantasy.FinishReasonStop, finishParts[0].FinishReason)
 				return
 			}
 
-			require.Empty(t, finishParts)
+			require.Empty(t, finishes)
 			require.Len(t, errorParts, 1)
 			require.Error(t, errorParts[0].Error)
-			if tt.wantEOF {
-				require.ErrorIs(t, errorParts[0].Error, io.EOF)
-				require.Contains(t, errorParts[0].Error.Error(), "message_stop")
+			if tt.wantErrContain != "" {
+				require.Contains(t, errorParts[0].Error.Error(), tt.wantErrContain)
+			}
+
+			var providerErr *fantasy.ProviderError
+			if tt.wantRetryable {
+				require.ErrorAs(t, errorParts[0].Error, &providerErr)
+				require.True(t, providerErr.IsRetryable())
+				require.ErrorIs(t, providerErr.Cause, io.ErrUnexpectedEOF)
 			} else {
-				require.NotContains(t, errorParts[0].Error.Error(), "message_stop")
-				require.Contains(t, errorParts[0].Error.Error(), tt.wantError)
+				require.NotErrorIs(t, errorParts[0].Error, io.ErrUnexpectedEOF)
+				if errors.As(errorParts[0].Error, &providerErr) {
+					require.False(t, providerErr.IsRetryable())
+					require.NotErrorIs(t, providerErr.Cause, io.ErrUnexpectedEOF)
+				}
 			}
 		})
 	}
@@ -838,17 +905,6 @@ func requireReasoningMetadata(t *testing.T, metadata fantasy.ProviderMetadata) *
 	return reasoning
 }
 
-func requireWebSearchResultMetadata(t *testing.T, metadata fantasy.ProviderMetadata) *WebSearchResultMetadata {
-	t.Helper()
-
-	providerOption, ok := fantasy.ProviderOptions(metadata)[Name]
-	require.True(t, ok, "provider metadata should contain anthropic key")
-	result, ok := providerOption.(*WebSearchResultMetadata)
-	require.True(t, ok, "provider metadata should be *WebSearchResultMetadata")
-	require.NotNil(t, result)
-	return result
-}
-
 func streamPartsByType(parts []fantasy.StreamPart, typ fantasy.StreamPartType) []fantasy.StreamPart {
 	var matches []fantasy.StreamPart
 	for _, part := range parts {
@@ -869,6 +925,17 @@ func awaitAnthropicCall(t *testing.T, calls <-chan anthropicCall) anthropicCall 
 		t.Fatal("timed out waiting for Anthropic request")
 		return anthropicCall{}
 	}
+}
+
+func requireWebSearchResultMetadata(t *testing.T, metadata fantasy.ProviderMetadata) *WebSearchResultMetadata {
+	t.Helper()
+
+	providerOption, ok := fantasy.ProviderOptions(metadata)[Name]
+	require.True(t, ok, "provider metadata should contain anthropic key")
+	result, ok := providerOption.(*WebSearchResultMetadata)
+	require.True(t, ok, "provider metadata should be *WebSearchResultMetadata")
+	require.NotNil(t, result)
+	return result
 }
 
 func assertNoAnthropicCall(t *testing.T, calls <-chan anthropicCall) {
@@ -1029,6 +1096,61 @@ func mockAnthropicWebSearchErrorResponse() map[string]any {
 	}
 }
 
+func TestToPrompt_WebSearchProviderExecutedErrorRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	prompt := fantasy.Prompt{
+		{
+			Role: fantasy.MessageRoleUser,
+			Content: []fantasy.MessagePart{
+				fantasy.TextPart{Text: "Search for the latest AI news"},
+			},
+		},
+		{
+			Role: fantasy.MessageRoleAssistant,
+			Content: []fantasy.MessagePart{
+				fantasy.ToolCallPart{
+					ToolCallID:       "srvtoolu_err",
+					ToolName:         "web_search",
+					Input:            `{"query":"latest AI news"}`,
+					ProviderExecuted: true,
+				},
+				fantasy.ToolResultPart{
+					ToolCallID:       "srvtoolu_err",
+					ProviderExecuted: true,
+					ProviderOptions: fantasy.ProviderOptions{
+						Name: &WebSearchResultMetadata{ErrorCode: "max_uses_exceeded"},
+					},
+				},
+				fantasy.TextPart{Text: "I was unable to search."},
+			},
+		},
+	}
+
+	_, messages, warnings := toPrompt(prompt, true)
+	require.Empty(t, warnings)
+	require.Len(t, messages, 2)
+
+	assistantMsg := messages[1]
+	require.Len(t, assistantMsg.Content, 3)
+	require.NotNil(t, assistantMsg.Content[0].OfServerToolUse)
+	require.Equal(t, "srvtoolu_err", assistantMsg.Content[0].OfServerToolUse.ID)
+
+	webResult := assistantMsg.Content[1]
+	require.NotNil(t, webResult.OfWebSearchToolResult)
+	require.Equal(t, "srvtoolu_err", webResult.OfWebSearchToolResult.ToolUseID)
+	require.Nil(t, webResult.OfWebSearchToolResult.Content.OfWebSearchToolResultBlockItem)
+	require.NotNil(t, webResult.OfWebSearchToolResult.Content.OfRequestWebSearchToolResultError)
+	require.Equal(
+		t,
+		anthropic.WebSearchToolResultErrorCodeMaxUsesExceeded,
+		webResult.OfWebSearchToolResult.Content.OfRequestWebSearchToolResultError.ErrorCode,
+	)
+
+	require.NotNil(t, assistantMsg.Content[2].OfText)
+	require.Equal(t, "I was unable to search.", assistantMsg.Content[2].OfText.Text)
+}
+
 func TestToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 	t.Parallel()
 
@@ -1122,61 +1244,6 @@ func TestToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 	// Third content block: plain text.
 	require.NotNil(t, assistantMsg.Content[2].OfText)
 	require.Equal(t, "Here is what I found.", assistantMsg.Content[2].OfText.Text)
-}
-
-func TestToPrompt_WebSearchProviderExecutedErrorRoundTrip(t *testing.T) {
-	t.Parallel()
-
-	prompt := fantasy.Prompt{
-		{
-			Role: fantasy.MessageRoleUser,
-			Content: []fantasy.MessagePart{
-				fantasy.TextPart{Text: "Search for the latest AI news"},
-			},
-		},
-		{
-			Role: fantasy.MessageRoleAssistant,
-			Content: []fantasy.MessagePart{
-				fantasy.ToolCallPart{
-					ToolCallID:       "srvtoolu_err",
-					ToolName:         "web_search",
-					Input:            `{"query":"latest AI news"}`,
-					ProviderExecuted: true,
-				},
-				fantasy.ToolResultPart{
-					ToolCallID:       "srvtoolu_err",
-					ProviderExecuted: true,
-					ProviderOptions: fantasy.ProviderOptions{
-						Name: &WebSearchResultMetadata{ErrorCode: "max_uses_exceeded"},
-					},
-				},
-				fantasy.TextPart{Text: "I was unable to search."},
-			},
-		},
-	}
-
-	_, messages, warnings := toPrompt(prompt, true)
-	require.Empty(t, warnings)
-	require.Len(t, messages, 2)
-
-	assistantMsg := messages[1]
-	require.Len(t, assistantMsg.Content, 3)
-	require.NotNil(t, assistantMsg.Content[0].OfServerToolUse)
-	require.Equal(t, "srvtoolu_err", assistantMsg.Content[0].OfServerToolUse.ID)
-
-	webResult := assistantMsg.Content[1]
-	require.NotNil(t, webResult.OfWebSearchToolResult)
-	require.Equal(t, "srvtoolu_err", webResult.OfWebSearchToolResult.ToolUseID)
-	require.Nil(t, webResult.OfWebSearchToolResult.Content.OfWebSearchToolResultBlockItem)
-	require.NotNil(t, webResult.OfWebSearchToolResult.Content.OfRequestWebSearchToolResultError)
-	require.Equal(
-		t,
-		anthropic.WebSearchToolResultErrorCodeMaxUsesExceeded,
-		webResult.OfWebSearchToolResult.Content.OfRequestWebSearchToolResultError.ErrorCode,
-	)
-
-	require.NotNil(t, assistantMsg.Content[2].OfText)
-	require.Equal(t, "I was unable to search.", assistantMsg.Content[2].OfText.Text)
 }
 
 func TestToPrompt_PreservesOrderForInterleavedThinkingAndWebSearch(t *testing.T) {
@@ -1493,7 +1560,8 @@ func TestGenerate_WebSearchResponse(t *testing.T) {
 
 	// TextContent with the final answer.
 	require.Len(t, texts, 1)
-	require.Equal(t,
+	require.Equal(
+		t,
 		"Based on recent search results, here is the latest AI news.",
 		texts[0].Text,
 	)
@@ -2918,7 +2986,8 @@ func TestGenerate_ComputerUseTool(t *testing.T) {
 
 		// Build the next prompt: append the assistant tool-call turn
 		// and the user screenshot-result turn.
-		prompt = append(prompt,
+		prompt = append(
+			prompt,
 			fantasy.Message{
 				Role: fantasy.MessageRoleAssistant,
 				Content: []fantasy.MessagePart{
@@ -3098,7 +3167,8 @@ func TestStream_ComputerUseTool(t *testing.T) {
 		require.NoError(t, err, "turn %d", turn)
 		gotActions = append(gotActions, parsed.Action)
 
-		prompt = append(prompt,
+		prompt = append(
+			prompt,
 			fantasy.Message{
 				Role: fantasy.MessageRoleAssistant,
 				Content: []fantasy.MessagePart{
@@ -3129,4 +3199,49 @@ func TestStream_ComputerUseTool(t *testing.T) {
 	for i, h := range betaHeaders {
 		require.Contains(t, h, "computer-use-2025-01-24", "request %d", i)
 	}
+}
+
+func TestStream_TruncatedWithoutStopReason(t *testing.T) {
+	t.Parallel()
+
+	// Truncated stream: no terminal message_delta with stop_reason.
+	server, _ := newAnthropicStreamingServer([]string{
+		"event: message_start\n",
+		`data: {"type":"message_start","message":{"id":"msg_01","type":"message","role":"assistant","model":"claude-sonnet-4-20250514","content":[],"stop_reason":null,"usage":{"input_tokens":10,"output_tokens":0}}}` + "\n\n",
+		"event: content_block_start\n",
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n",
+		"event: content_block_delta\n",
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}` + "\n\n",
+		"event: content_block_stop\n",
+		`data: {"type":"content_block_stop","index":0}` + "\n\n",
+	})
+	defer server.Close()
+
+	provider, err := New(WithAPIKey("test-api-key"), WithBaseURL(server.URL))
+	require.NoError(t, err)
+	model, err := provider.LanguageModel(context.Background(), "claude-sonnet-4-20250514")
+	require.NoError(t, err)
+
+	stream, err := model.Stream(context.Background(), fantasy.Call{Prompt: testPrompt()})
+	require.NoError(t, err)
+
+	var parts []fantasy.StreamPart
+	stream(func(part fantasy.StreamPart) bool {
+		parts = append(parts, part)
+		return true
+	})
+
+	var errPart *fantasy.StreamPart
+	for i, part := range parts {
+		if part.Type == fantasy.StreamPartTypeError {
+			errPart = &parts[i]
+		}
+		require.NotEqual(t, fantasy.StreamPartTypeFinish, part.Type)
+	}
+	require.NotNil(t, errPart)
+
+	var providerErr *fantasy.ProviderError
+	require.ErrorAs(t, errPart.Error, &providerErr)
+	require.True(t, providerErr.IsRetryable())
+	require.ErrorIs(t, providerErr.Cause, io.ErrUnexpectedEOF)
 }

@@ -166,6 +166,7 @@ func (o responsesLanguageModel) prepareParams(call fantasy.Call) (*responses.Res
 		params.Store = param.NewOpt(false)
 	}
 
+	allowPreviousResponseToolOutputs := false
 	if openaiOptions != nil && openaiOptions.PreviousResponseID != nil && *openaiOptions.PreviousResponseID != "" {
 		if err := validatePreviousResponseIDPrompt(call.Prompt); err != nil {
 			return nil, warnings, err
@@ -174,10 +175,18 @@ func (o responsesLanguageModel) prepareParams(call fantasy.Call) (*responses.Res
 			return nil, warnings, errors.New(previousResponseIDStoreError)
 		}
 		params.PreviousResponseID = param.NewOpt(*openaiOptions.PreviousResponseID)
+		allowPreviousResponseToolOutputs = true
 	}
 
 	storeEnabled := openaiOptions != nil && openaiOptions.Store != nil && *openaiOptions.Store
-	input, inputWarnings, err := toResponsesPrompt(call.Prompt, modelConfig.systemMessageMode, storeEnabled)
+	var input responses.ResponseInputParam
+	var inputWarnings []fantasy.CallWarning
+	var err error
+	if allowPreviousResponseToolOutputs {
+		input, inputWarnings, err = toResponsesPromptWithValidation(call.Prompt, modelConfig.systemMessageMode, storeEnabled, true)
+	} else {
+		input, inputWarnings, err = toResponsesPrompt(call.Prompt, modelConfig.systemMessageMode, storeEnabled)
+	}
 	warnings = append(warnings, inputWarnings...)
 	if err != nil {
 		return nil, warnings, err
@@ -401,6 +410,10 @@ func responsesUsage(resp responses.Response) fantasy.Usage {
 }
 
 func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bool) (responses.ResponseInputParam, []fantasy.CallWarning, error) {
+	return toResponsesPromptWithValidation(prompt, systemMessageMode, store, false)
+}
+
+func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode string, store bool, allowUnpairedFunctionCallOutputs bool) (responses.ResponseInputParam, []fantasy.CallWarning, error) {
 	var input responses.ResponseInputParam
 	var warnings []fantasy.CallWarning
 
@@ -665,7 +678,7 @@ func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bo
 
 				// Computer call outputs require image data and use a
 				// dedicated input item type. The tool result is
-				// recognised as a computer_call_output when either the
+				// recognized as a computer_call_output when either the
 				// originating computer_call is in the prompt history or
 				// the caller explicitly attaches
 				// ComputerCallOutputOptions (typical when chaining via
@@ -713,6 +726,7 @@ func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bo
 				}
 
 				var outputStr string
+				var followupParts responses.ResponseInputMessageContentListParam
 				switch toolResultPart.Output.GetType() {
 				case fantasy.ToolResultContentTypeText:
 					output, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentText](toolResultPart.Output)
@@ -734,14 +748,55 @@ func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bo
 						continue
 					}
 					outputStr = output.Error.Error()
+				case fantasy.ToolResultContentTypeMedia:
+					output, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentMedia](toolResultPart.Output)
+					if !ok {
+						warnings = append(warnings, fantasy.CallWarning{
+							Type:    fantasy.CallWarningTypeOther,
+							Message: "tool result output does not have the right type",
+						})
+						continue
+					}
+					// The Responses API function_call_output only accepts a
+					// string. Emit a text placeholder (preserving any
+					// accompanying text) so the tool_call/tool_result pairing
+					// stays valid, then attach the media as a synthetic user
+					// input_image so vision-capable models still receive it.
+					outputStr = output.Text
+					if outputStr == "" {
+						outputStr = fmt.Sprintf("The tool returned %s content; see the following user message.", output.MediaType)
+					}
+					if strings.HasPrefix(output.MediaType, "image/") {
+						imageURL := fmt.Sprintf("data:%s;base64,%s", output.MediaType, output.Data)
+						followupParts = append(followupParts, responses.ResponseInputContentUnionParam{
+							OfInputImage: &responses.ResponseInputImageParam{
+								Type:     "input_image",
+								ImageURL: param.NewOpt(imageURL),
+							},
+						})
+					} else {
+						warnings = append(warnings, fantasy.CallWarning{
+							Type:    fantasy.CallWarningTypeOther,
+							Message: fmt.Sprintf("tool result media type %s not supported, sending text placeholder only", output.MediaType),
+						})
+					}
+				default:
+					warnings = append(warnings, fantasy.CallWarning{
+						Type:    fantasy.CallWarningTypeOther,
+						Message: fmt.Sprintf("tool result output type %q not supported", toolResultPart.Output.GetType()),
+					})
+					continue
 				}
 
 				input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput(toolResultPart.ToolCallID, outputStr))
+				if len(followupParts) > 0 {
+					input = append(input, responses.ResponseInputItemParamOfMessage(followupParts, responses.EasyInputMessageRoleUser))
+				}
 			}
 		}
 	}
 
-	if err := validateResponsesInput(input); err != nil {
+	if err := validateResponsesInputWithOptions(input, allowUnpairedFunctionCallOutputs); err != nil {
 		return nil, warnings, err
 	}
 
@@ -756,6 +811,13 @@ func isResponsesWebSearchToolCall(toolCallPart fantasy.ToolCallPart) bool {
 func validateResponsesInput(input responses.ResponseInputParam) error {
 	if err := validateResponsesFunctionCallOutputs(input); err != nil {
 		return err
+	}
+	return validateResponsesItemReferences(input)
+}
+
+func validateResponsesInputWithOptions(input responses.ResponseInputParam, allowUnpairedFunctionCallOutputs bool) error {
+	if !allowUnpairedFunctionCallOutputs {
+		return validateResponsesInput(input)
 	}
 	return validateResponsesItemReferences(input)
 }
@@ -970,6 +1032,10 @@ func (o responsesLanguageModel) Generate(ctx context.Context, call fantasy.Call)
 		return nil, toProviderErr(err)
 	}
 
+	if response == nil {
+		return nil, &fantasy.Error{Title: "no response", Message: "provider returned nil response"}
+	}
+
 	if response.Error.Message != "" {
 		return nil, &fantasy.Error{
 			Title:   "provider error",
@@ -1131,17 +1197,6 @@ func mapResponsesFinishReason(reason string, hasFunctionCall bool) fantasy.Finis
 	}
 }
 
-func responsesStreamClosedBeforeTerminalEventError(err error) error {
-	if err == nil {
-		err = io.EOF
-	}
-	return fmt.Errorf("openai responses stream closed before terminal event: %w", err)
-}
-
-func responsesFailedStreamError(response responses.Response) error {
-	return fmt.Errorf("response failed: %s (code: %s)", response.Error.Message, response.Error.Code)
-}
-
 func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.StreamResponse, error) {
 	params, warnings, err := o.prepareParams(call)
 	if err != nil {
@@ -1158,9 +1213,9 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 	// identical; the overwrites ensure we have the final value even if an event
 	// is missed.
 	responseID := ""
+	sawTerminalEvent := false
 	ongoingToolCalls := make(map[int64]*ongoingToolCall)
 	hasFunctionCall := false
-	sawTerminalEvent := false
 	activeReasoning := make(map[string]*reasoningState)
 
 	return func(yield func(fantasy.StreamPart) bool) {
@@ -1479,7 +1534,7 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 				failed := event.AsResponseFailed()
 				if !yield(fantasy.StreamPart{
 					Type:  fantasy.StreamPartTypeError,
-					Error: responsesFailedStreamError(failed.Response),
+					Error: responsesFailedStreamError(failed.Response.Error.Message, string(failed.Response.Error.Code)),
 				}) {
 					return
 				}
@@ -1489,7 +1544,7 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 				errorEvent := event.AsError()
 				if !yield(fantasy.StreamPart{
 					Type:  fantasy.StreamPartTypeError,
-					Error: fmt.Errorf("response error: %s (code: %s)", errorEvent.Message, errorEvent.Code),
+					Error: responsesErrorStreamError(errorEvent.Message, errorEvent.Code),
 				}) {
 					return
 				}
@@ -1506,9 +1561,13 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 			return
 		}
 		if !sawTerminalEvent {
+			err := ctx.Err()
+			if err == nil {
+				err = fantasy.NewIncompleteStreamError()
+			}
 			yield(fantasy.StreamPart{
 				Type:  fantasy.StreamPartTypeError,
-				Error: responsesStreamClosedBeforeTerminalEventError(err),
+				Error: err,
 			})
 			return
 		}
@@ -1520,6 +1579,24 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 			ProviderMetadata: responsesProviderMetadata(responseID),
 		})
 	}, nil
+}
+
+// responsesFailedStreamError intentionally returns a provider-declared failure
+// instead of a retryable transport error. Only synthetic stream truncation
+// errors are wrapped with io.ErrUnexpectedEOF.
+func responsesFailedStreamError(message, code string) error {
+	return responsesStreamFailureError("response failed", message, code)
+}
+
+func responsesErrorStreamError(message, code string) error {
+	return responsesStreamFailureError("response error", message, code)
+}
+
+func responsesStreamFailureError(title, message, code string) error {
+	if code != "" {
+		message = fmt.Sprintf("%s (code: %s)", message, code)
+	}
+	return &fantasy.Error{Title: title, Message: message}
 }
 
 // toWebSearchToolParam converts a ProviderDefinedTool with ID
@@ -1787,9 +1864,8 @@ func (o responsesLanguageModel) streamObjectWithJSONMode(ctx context.Context, ca
 		// identical; the overwrites ensure we have the final value even if an event
 		// is missed.
 		var responseID string
-		var streamErr error
+		var sawTerminalEvent bool
 		hasFunctionCall := false
-		sawTerminalEvent := false
 
 		for stream.Next() {
 			event := stream.Current()
@@ -1858,10 +1934,9 @@ func (o responsesLanguageModel) streamObjectWithJSONMode(ctx context.Context, ca
 
 			case "response.failed":
 				failed := event.AsResponseFailed()
-				streamErr = responsesFailedStreamError(failed.Response)
 				if !yield(fantasy.ObjectStreamPart{
 					Type:  fantasy.ObjectStreamPartTypeError,
-					Error: streamErr,
+					Error: responsesFailedStreamError(failed.Response.Error.Message, string(failed.Response.Error.Code)),
 				}) {
 					return
 				}
@@ -1869,10 +1944,9 @@ func (o responsesLanguageModel) streamObjectWithJSONMode(ctx context.Context, ca
 
 			case "error":
 				errorEvent := event.AsError()
-				streamErr = fmt.Errorf("response error: %s (code: %s)", errorEvent.Message, errorEvent.Code)
 				if !yield(fantasy.ObjectStreamPart{
 					Type:  fantasy.ObjectStreamPartTypeError,
-					Error: streamErr,
+					Error: responsesErrorStreamError(errorEvent.Message, errorEvent.Code),
 				}) {
 					return
 				}
@@ -1889,22 +1963,26 @@ func (o responsesLanguageModel) streamObjectWithJSONMode(ctx context.Context, ca
 			return
 		}
 		if !sawTerminalEvent {
+			err := ctx.Err()
+			if err == nil {
+				err = fantasy.NewIncompleteStreamError()
+			}
 			yield(fantasy.ObjectStreamPart{
 				Type:  fantasy.ObjectStreamPartTypeError,
-				Error: responsesStreamClosedBeforeTerminalEventError(err),
+				Error: err,
 			})
 			return
 		}
 
 		// Final validation and emit
-		if streamErr == nil && lastParsedObject != nil {
+		if lastParsedObject != nil {
 			yield(fantasy.ObjectStreamPart{
 				Type:             fantasy.ObjectStreamPartTypeFinish,
 				Usage:            usage,
 				FinishReason:     finishReason,
 				ProviderMetadata: responsesProviderMetadata(responseID),
 			})
-		} else if streamErr == nil && lastParsedObject == nil {
+		} else {
 			// No object was generated
 			yield(fantasy.ObjectStreamPart{
 				Type: fantasy.ObjectStreamPartTypeError,
