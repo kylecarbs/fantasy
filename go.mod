@@ -2,6 +2,8 @@ module charm.land/fantasy
 
 go 1.25.0
 
+toolchain go1.26.4
+
 require (
 	charm.land/x/vcr v0.1.1
 	cloud.google.com/go/auth v0.18.2
