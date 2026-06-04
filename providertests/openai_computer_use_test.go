@@ -95,7 +95,7 @@ func TestOpenAIComputerUse(t *testing.T) {
 
 		result, err := agent.Generate(t.Context(), fantasy.AgentCall{
 			Prompt:          "Take a screenshot of the desktop",
-			MaxOutputTokens: new(int64(4000)),
+			MaxOutputTokens: fantasy.Opt[int64](4000),
 			ProviderOptions: providerOpts,
 		})
 		require.NoError(t, err)
@@ -134,7 +134,7 @@ func TestOpenAIComputerUse(t *testing.T) {
 
 		result, err := agent.Stream(t.Context(), fantasy.AgentStreamCall{
 			Prompt:          "Take a screenshot of the desktop",
-			MaxOutputTokens: new(int64(4000)),
+			MaxOutputTokens: fantasy.Opt[int64](4000),
 			ProviderOptions: providerOpts,
 		})
 		require.NoError(t, err)
@@ -238,7 +238,7 @@ func TestOpenAIComputerUse_AllActions(t *testing.T) {
 
 	result, err := agent.Generate(t.Context(), fantasy.AgentCall{
 		Prompt:          prompt,
-		MaxOutputTokens: new(int64(16000)),
+		MaxOutputTokens: fantasy.Opt[int64](16000),
 		ProviderOptions: providerOpts,
 	})
 	require.NoError(t, err)
