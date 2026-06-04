@@ -5,6 +5,7 @@ jobs:
   build:
     uses: charmbracelet/meta/.github/workflows/build.yml@main
     with:
+      go_version: "1.26.4"
       go-version: "1.26.4"
       go-version-file: ./go.mod
     secrets:
