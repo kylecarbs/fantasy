@@ -43,6 +43,7 @@ const (
 	TypeReasoningOptionMetadata = Name + ".reasoning_metadata"
 	TypeProviderCacheControl    = Name + ".cache_control_options"
 	TypeWebSearchResultMetadata = Name + ".web_search_result_metadata"
+	TypeRefusalMetadata         = Name + ".refusal_metadata"
 )
 
 // Register Anthropic provider-specific types with the global registry.
@@ -75,6 +76,58 @@ func init() {
 		}
 		return &v, nil
 	})
+	fantasy.RegisterProviderType(TypeRefusalMetadata, func(data []byte) (fantasy.ProviderOptionsData, error) {
+		var v RefusalMetadata
+		if err := json.Unmarshal(data, &v); err != nil {
+			return nil, err
+		}
+		return &v, nil
+	})
+}
+
+// RefusalMetadata carries the details Anthropic emits in stop_details when a
+// response is stopped by its real-time safety classifiers (stop_reason
+// "refusal"). It is attached to the finish stream part so callers can surface
+// why a turn produced no content.
+type RefusalMetadata struct {
+	// Category is the refusal category, e.g. "cyber".
+	Category string `json:"category"`
+	// Explanation is the human-readable explanation, including any help link.
+	Explanation string `json:"explanation"`
+}
+
+// Options implements the ProviderOptionsData interface.
+func (*RefusalMetadata) Options() {}
+
+// MarshalJSON implements custom JSON marshaling with type info for RefusalMetadata.
+func (m RefusalMetadata) MarshalJSON() ([]byte, error) {
+	type plain RefusalMetadata
+	return fantasy.MarshalProviderType(TypeRefusalMetadata, plain(m))
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling with type info for RefusalMetadata.
+func (m *RefusalMetadata) UnmarshalJSON(data []byte) error {
+	type plain RefusalMetadata
+	var p plain
+	if err := fantasy.UnmarshalProviderType(data, &p); err != nil {
+		return err
+	}
+	*m = RefusalMetadata(p)
+	return nil
+}
+
+// GetRefusalMetadata returns the Anthropic refusal metadata from a provider
+// metadata map, or nil when absent.
+func GetRefusalMetadata(metadata fantasy.ProviderMetadata) *RefusalMetadata {
+	if metadata == nil {
+		return nil
+	}
+	if data, ok := metadata[Name]; ok {
+		if refusal, ok := data.(*RefusalMetadata); ok {
+			return refusal
+		}
+	}
+	return nil
 }
 
 // ProviderOptions represents additional options for the Anthropic provider.

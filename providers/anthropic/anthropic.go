@@ -1335,9 +1335,47 @@ func mapFinishReason(finishReason string) fantasy.FinishReason {
 		return fantasy.FinishReasonLength
 	case "tool_use":
 		return fantasy.FinishReasonToolCalls
+	case "refusal":
+		// Anthropic's real-time safety classifiers stopped the response.
+		return fantasy.FinishReasonContentFilter
 	default:
 		return fantasy.FinishReasonUnknown
 	}
+}
+
+// parseAnthropicRefusal extracts stop_details from a message_delta delta JSON
+// when the model refused (stop_reason "refusal"). It returns nil when the delta
+// carries no refusal details.
+func parseAnthropicRefusal(deltaJSON string) *RefusalMetadata {
+	if deltaJSON == "" {
+		return nil
+	}
+	var parsed struct {
+		StopDetails *struct {
+			Type        string `json:"type"`
+			Category    string `json:"category"`
+			Explanation string `json:"explanation"`
+		} `json:"stop_details"`
+	}
+	if err := json.Unmarshal([]byte(deltaJSON), &parsed); err != nil {
+		return nil
+	}
+	if parsed.StopDetails == nil || parsed.StopDetails.Type != "refusal" {
+		return nil
+	}
+	return &RefusalMetadata{
+		Category:    parsed.StopDetails.Category,
+		Explanation: parsed.StopDetails.Explanation,
+	}
+}
+
+// refusalProviderMetadata builds the finish-part provider metadata for a
+// refusal, or an empty map when there is none.
+func refusalProviderMetadata(refusal *RefusalMetadata) fantasy.ProviderMetadata {
+	if refusal == nil {
+		return fantasy.ProviderMetadata{}
+	}
+	return fantasy.ProviderMetadata{Name: refusal}
 }
 
 // Generate implements fantasy.LanguageModel.
@@ -1500,6 +1538,7 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 		}
 
 		sawMessageStop := false
+		var refusalMeta *RefusalMetadata
 
 		for stream.Next() {
 			chunk := stream.Current()
@@ -1703,6 +1742,14 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 						return
 					}
 				}
+			case "message_delta":
+				// Capture stop_details on a refusal so the finish part can
+				// carry the reason. The pinned SDK fork (v1.26.0 base) does
+				// not model stop_details (upstream added it in v1.29.0), so
+				// parse it from the raw delta JSON.
+				if rm := parseAnthropicRefusal(chunk.AsMessageDelta().Delta.RawJSON()); rm != nil {
+					refusalMeta = rm
+				}
 			case "message_stop":
 				sawMessageStop = true
 			}
@@ -1743,7 +1790,7 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 				CacheCreationTokens: acc.Usage.CacheCreationInputTokens,
 				CacheReadTokens:     acc.Usage.CacheReadInputTokens,
 			},
-			ProviderMetadata: fantasy.ProviderMetadata{},
+			ProviderMetadata: refusalProviderMetadata(refusalMeta),
 		})
 	}, nil
 }
