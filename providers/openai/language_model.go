@@ -251,6 +251,9 @@ func (o languageModel) Generate(ctx context.Context, call fantasy.Call) (*fantas
 	if err != nil {
 		return nil, toProviderErr(err)
 	}
+	if response == nil {
+		return nil, &fantasy.Error{Title: "no response", Message: "provider returned nil response"}
+	}
 
 	if len(response.Choices) == 0 {
 		return nil, &fantasy.Error{Title: "no response", Message: "no response generated"}
@@ -514,7 +517,10 @@ func (o languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 			}
 
 			// Handle tool calls that finish with empty arguments (e.g., Copilot).
-			// Normalize empty args to "{}" and emit the tool call if valid.
+			// Normalize empty args to "{}" and emit the tool call.
+			// If the arguments are invalid JSON, we still yield the tool call
+			// so the consumer (agent) can handle the error rather than
+			// silently dropping it.
 			for idx, tc := range toolCalls {
 				if tc.hasFinished {
 					continue
@@ -523,16 +529,14 @@ func (o languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 					tc.arguments = "{}"
 					toolCalls[idx] = tc
 				}
-				if xjson.IsValid(tc.arguments) {
-					if !yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeToolInputEnd, ID: tc.id}) {
-						return
-					}
-					if !yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeToolCall, ID: tc.id, ToolCallName: tc.name, ToolCallInput: tc.arguments}) {
-						return
-					}
-					tc.hasFinished = true
-					toolCalls[idx] = tc
+				if !yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeToolInputEnd, ID: tc.id}) {
+					return
 				}
+				if !yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeToolCall, ID: tc.id, ToolCallName: tc.name, ToolCallInput: tc.arguments}) {
+					return
+				}
+				tc.hasFinished = true
+				toolCalls[idx] = tc
 			}
 
 			if len(acc.Choices) > 0 {
@@ -559,6 +563,20 @@ func (o languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 				if len(choice.Message.ToolCalls) > 0 {
 					mappedFinishReason = fantasy.FinishReasonToolCalls
 				}
+			}
+			// Truncated stream: upstream closed without finish_reason and we
+			// can't infer a tool-call turn. Surface as a retryable error so
+			// the retry middleware re-runs the step.
+			if finishReason == "" && mappedFinishReason != fantasy.FinishReasonToolCalls {
+				err := ctx.Err()
+				if err == nil {
+					err = fantasy.NewIncompleteStreamError()
+				}
+				yield(fantasy.StreamPart{
+					Type:  fantasy.StreamPartTypeError,
+					Error: err,
+				})
+				return
 			}
 			yield(fantasy.StreamPart{
 				Type:             fantasy.StreamPartTypeFinish,
@@ -854,8 +872,8 @@ func (o languageModel) streamObjectWithJSONMode(ctx context.Context, call fantas
 		var lastParsedObject any
 		var usage fantasy.Usage
 		var finishReason fantasy.FinishReason
+		var sawFinishReason bool
 		var providerMetadata fantasy.ProviderMetadata
-		var streamErr error
 
 		for stream.Next() {
 			chunk := stream.Current()
@@ -870,6 +888,7 @@ func (o languageModel) streamObjectWithJSONMode(ctx context.Context, call fantas
 			choice := chunk.Choices[0]
 			if choice.FinishReason != "" {
 				finishReason = o.mapFinishReasonFunc(choice.FinishReason)
+				sawFinishReason = true
 			}
 
 			if choice.Delta.Content != "" {
@@ -914,10 +933,21 @@ func (o languageModel) streamObjectWithJSONMode(ctx context.Context, call fantas
 
 		err := stream.Err()
 		if err != nil && !errors.Is(err, io.EOF) {
-			streamErr = toProviderErr(err)
 			yield(fantasy.ObjectStreamPart{
 				Type:  fantasy.ObjectStreamPartTypeError,
-				Error: streamErr,
+				Error: toProviderErr(err),
+			})
+			return
+		}
+
+		if !sawFinishReason {
+			err := ctx.Err()
+			if err == nil {
+				err = fantasy.NewIncompleteStreamError()
+			}
+			yield(fantasy.ObjectStreamPart{
+				Type:  fantasy.ObjectStreamPartTypeError,
+				Error: err,
 			})
 			return
 		}

@@ -13,6 +13,7 @@ import (
 	"charm.land/fantasy/providers/openai"
 	openaisdk "github.com/charmbracelet/openai-go"
 	"github.com/charmbracelet/openai-go/packages/param"
+	xstrings "github.com/charmbracelet/x/exp/strings"
 )
 
 const reasoningStartedCtx = "reasoning_started"
@@ -295,7 +296,7 @@ func languageModelStreamExtra(chunk openaisdk.ChatCompletionChunk, yield func(fa
 		currentState.format = detail.Format
 		ctx[reasoningStartedCtx] = currentState
 		delta := detail.Summary
-		if strings.HasPrefix(detail.Format, "google-gemini") {
+		if xstrings.ContainsAnyOf(detail.Format, "google-gemini", "anthropic-claude") {
 			delta = detail.Text
 		}
 		return ctx, yield(fantasy.StreamPart{

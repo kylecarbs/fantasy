@@ -84,6 +84,7 @@ type ProviderOptions struct {
 	Effort                 *Effort                 `json:"effort"`
 	ThinkingDisplay        *ThinkingDisplay        `json:"thinking_display"`
 	DisableParallelToolUse *bool                   `json:"disable_parallel_tool_use"`
+	ExtraBody              map[string]any          `json:"extra_body,omitempty"`
 }
 
 // Options implements the ProviderOptions interface.
@@ -173,7 +174,7 @@ type WebSearchResultItem struct {
 
 // WebSearchResultMetadata stores web search results from Anthropic's
 // server-executed web_search tool. The structured data, especially
-// EncryptedContent and error codes, must be preserved for multi-turn
+// encrypted content and error codes, must be preserved for multi-turn
 // conversations.
 type WebSearchResultMetadata struct {
 	Results []WebSearchResultItem `json:"results,omitempty"`
