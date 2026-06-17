@@ -28,11 +28,22 @@ func init() {
 type ProviderOptions struct {
 	User            *string                 `json:"user"`
 	ReasoningEffort *openai.ReasoningEffort `json:"reasoning_effort"`
+	ExtraBody       map[string]any          `json:"extra_body,omitempty"`
 }
 
 // ReasoningData represents reasoning data for OpenAI-compatible provider.
+// Some providers use "reasoning_content" (e.g. Avian), others use "reasoning" (e.g. Moonshot AI/Kimi).
 type ReasoningData struct {
 	ReasoningContent string `json:"reasoning_content"`
+	Reasoning        string `json:"reasoning"`
+}
+
+// GetReasoningContent returns the reasoning text from whichever field is populated.
+func (r ReasoningData) GetReasoningContent() string {
+	if r.ReasoningContent != "" {
+		return r.ReasoningContent
+	}
+	return r.Reasoning
 }
 
 // Options implements the ProviderOptions interface.

@@ -255,7 +255,7 @@ func (g languageModel) prepareParams(call fantasy.Call) (*genai.GenerateContentC
 				Type:    fantasy.CallWarningTypeOther,
 				Message: "The 'thinking_budget' option can not be under 128 and will be set to 128 by default",
 			})
-			providerOptions.ThinkingConfig.ThinkingBudget = fantasy.Opt(int64(128))
+			providerOptions.ThinkingConfig.ThinkingBudget = new(int64(128))
 		}
 
 		if providerOptions.ThinkingConfig.ThinkingLevel != nil &&
@@ -867,7 +867,13 @@ func (g *languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.
 		if len(toolCalls) > 0 {
 			finishReason = fantasy.FinishReasonToolCalls
 		} else if finishReason == "" {
-			finishReason = fantasy.FinishReasonStop
+			// Truncated stream: no candidate emitted a finishReason before
+			// close. Surface as a retryable error.
+			yield(fantasy.StreamPart{
+				Type:  fantasy.StreamPartTypeError,
+				Error: fantasy.NewIncompleteStreamError(),
+			})
+			return
 		}
 
 		var finalUsage fantasy.Usage

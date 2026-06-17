@@ -11,6 +11,7 @@ import (
 	"slices"
 	"sync"
 
+	"charm.land/fantasy/jsonrepair"
 	"charm.land/fantasy/schema"
 	"github.com/charmbracelet/x/exp/slice"
 )
@@ -146,6 +147,7 @@ type agentSettings struct {
 	providerDefinedTools    []ProviderDefinedTool
 	executableProviderTools []ExecutableProviderTool
 	tools                   []AgentTool
+	toolChoice              *ToolChoice
 	maxRetries              *int
 
 	model LanguageModel
@@ -162,12 +164,13 @@ type AgentCall struct {
 	Files            []FilePart `json:"files"`
 	Messages         []Message  `json:"messages"`
 	MaxOutputTokens  *int64
-	Temperature      *float64 `json:"temperature"`
-	TopP             *float64 `json:"top_p"`
-	TopK             *int64   `json:"top_k"`
-	PresencePenalty  *float64 `json:"presence_penalty"`
-	FrequencyPenalty *float64 `json:"frequency_penalty"`
-	ActiveTools      []string `json:"active_tools"`
+	Temperature      *float64    `json:"temperature"`
+	TopP             *float64    `json:"top_p"`
+	TopK             *int64      `json:"top_k"`
+	PresencePenalty  *float64    `json:"presence_penalty"`
+	FrequencyPenalty *float64    `json:"frequency_penalty"`
+	ActiveTools      []string    `json:"active_tools"`
+	ToolChoice       *ToolChoice `json:"tool_choice"`
 	ProviderOptions  ProviderOptions
 	OnRetry          OnRetryCallback
 	MaxRetries       *int
@@ -252,12 +255,13 @@ type AgentStreamCall struct {
 	Files            []FilePart `json:"files"`
 	Messages         []Message  `json:"messages"`
 	MaxOutputTokens  *int64
-	Temperature      *float64 `json:"temperature"`
-	TopP             *float64 `json:"top_p"`
-	TopK             *int64   `json:"top_k"`
-	PresencePenalty  *float64 `json:"presence_penalty"`
-	FrequencyPenalty *float64 `json:"frequency_penalty"`
-	ActiveTools      []string `json:"active_tools"`
+	Temperature      *float64    `json:"temperature"`
+	TopP             *float64    `json:"top_p"`
+	TopK             *int64      `json:"top_k"`
+	PresencePenalty  *float64    `json:"presence_penalty"`
+	FrequencyPenalty *float64    `json:"frequency_penalty"`
+	ActiveTools      []string    `json:"active_tools"`
+	ToolChoice       *ToolChoice `json:"tool_choice"`
 	Headers          map[string]string
 	ProviderOptions  ProviderOptions
 	OnRetry          OnRetryCallback
@@ -335,6 +339,7 @@ func (a *agent) prepareCall(call AgentCall) AgentCall {
 	call.PresencePenalty = cmp.Or(call.PresencePenalty, a.settings.presencePenalty)
 	call.FrequencyPenalty = cmp.Or(call.FrequencyPenalty, a.settings.frequencyPenalty)
 	call.MaxRetries = cmp.Or(call.MaxRetries, a.settings.maxRetries)
+	call.ToolChoice = cmp.Or(call.ToolChoice, a.settings.toolChoice)
 
 	if len(call.StopWhen) == 0 && len(a.settings.stopWhen) > 0 {
 		call.StopWhen = a.settings.stopWhen
@@ -383,6 +388,9 @@ func (a *agent) Generate(ctx context.Context, opts AgentCall) (*AgentResult, err
 		stepSystemPrompt := a.settings.systemPrompt
 		stepActiveTools := opts.ActiveTools
 		stepToolChoice := ToolChoiceAuto
+		if opts.ToolChoice != nil {
+			stepToolChoice = *opts.ToolChoice
+		}
 		disableAllTools := false
 		stepTools := a.settings.tools
 		if opts.PrepareStep != nil {
@@ -485,7 +493,12 @@ func (a *agent) Generate(ctx context.Context, opts AgentCall) (*AgentResult, err
 
 		toolResults, err := a.executeTools(ctx, stepTools, stepExecProviderTools, stepToolCalls, nil)
 
-		// Build step content with validated tool calls and tool results.		// Provider-executed tool calls are kept as-is.
+		// If any tool result requested a stop, deliver all results but don't
+		// request another completion from the model.
+		stopTurnRequested := hasStopTurn(toolResults)
+
+		// Build step content with validated tool calls and tool results.
+		// Provider-executed tool calls are kept as-is.
 		stepContent := []Content{}
 		toolCallIndex := 0
 		for _, content := range result.Content {
@@ -523,7 +536,7 @@ func (a *agent) Generate(ctx context.Context, opts AgentCall) (*AgentResult, err
 		steps = append(steps, stepResult)
 		shouldStop := isStopConditionMet(opts.StopWhen, steps)
 
-		if shouldStop || err != nil || len(stepToolCalls) == 0 || result.FinishReason != FinishReasonToolCalls {
+		if shouldStop || err != nil || stopTurnRequested || len(stepToolCalls) == 0 || result.FinishReason != FinishReasonToolCalls {
 			break
 		}
 	}
@@ -555,6 +568,15 @@ func isStopConditionMet(conditions []StopCondition, steps []StepResult) bool {
 
 	for _, condition := range conditions {
 		if condition(steps) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasStopTurn(results []ToolResultContent) bool {
+	for _, r := range results {
+		if r.StopTurn {
 			return true
 		}
 	}
@@ -729,6 +751,7 @@ func (a *agent) executeSingleTool(ctx context.Context, toolMap map[string]AgentT
 			Error: err,
 		}
 		result.ClientMetadata = toolResult.Metadata
+		result.StopTurn = toolResult.StopTurn
 		if toolResultCallback != nil {
 			_ = toolResultCallback(result)
 		}
@@ -736,6 +759,7 @@ func (a *agent) executeSingleTool(ctx context.Context, toolMap map[string]AgentT
 	}
 
 	result.ClientMetadata = toolResult.Metadata
+	result.StopTurn = toolResult.StopTurn
 	if toolResult.IsError {
 		result.Result = ToolResultOutputContentError{
 			Error: errors.New(toolResult.Content),
@@ -771,6 +795,7 @@ func (a *agent) Stream(ctx context.Context, opts AgentStreamCall) (*AgentResult,
 		PresencePenalty:  opts.PresencePenalty,
 		FrequencyPenalty: opts.FrequencyPenalty,
 		ActiveTools:      opts.ActiveTools,
+		ToolChoice:       opts.ToolChoice,
 		ProviderOptions:  opts.ProviderOptions,
 		MaxRetries:       opts.MaxRetries,
 		OnRetry:          opts.OnRetry,
@@ -801,6 +826,9 @@ func (a *agent) Stream(ctx context.Context, opts AgentStreamCall) (*AgentResult,
 		stepSystemPrompt := a.settings.systemPrompt
 		stepActiveTools := call.ActiveTools
 		stepToolChoice := ToolChoiceAuto
+		if call.ToolChoice != nil {
+			stepToolChoice = *call.ToolChoice
+		}
 		disableAllTools := false
 		stepTools := a.settings.tools
 		// Apply step preparation if provided
@@ -1015,6 +1043,16 @@ func (a *agent) validateAndRepairToolCall(ctx context.Context, toolCall ToolCall
 					return *repairedToolCall
 				}
 			}
+		} else {
+			// Default repair: try jsonrepair for malformed JSON when no
+			// custom repair function is configured.
+			if repaired, repairErr := jsonrepair.RepairJSON(toolCall.Input); repairErr == nil && repaired != toolCall.Input {
+				repairedCall := toolCall
+				repairedCall.Input = repaired
+				if validateErr := a.validateToolCall(repairedCall, availableTools, execProviderTools); validateErr == nil {
+					return repairedCall
+				}
+			}
 		}
 
 		invalidToolCall := toolCall
@@ -1190,6 +1228,14 @@ func WithProviderDefinedTools(tools ...ProviderTool) AgentOption {
 	}
 }
 
+// WithToolChoice sets the default tool choice for the agent. It is overridden
+// by the ToolChoice on a specific call, and by PrepareStep at the step level.
+func WithToolChoice(choice ToolChoice) AgentOption {
+	return func(s *agentSettings) {
+		s.toolChoice = &choice
+	}
+}
+
 // WithStopConditions sets the stop conditions for the agent.
 func WithStopConditions(conditions ...StopCondition) AgentOption {
 	return func(s *agentSettings) {
@@ -1247,11 +1293,7 @@ func (a *agent) processStepStream(ctx context.Context, stream StreamResponse, op
 		toolCall ToolCallContent
 		parallel bool
 	}
-	toolChan := make(chan toolExecutionRequest, 10)
-	var toolExecutionWg sync.WaitGroup
-	var toolStateMu sync.Mutex
-	toolResults := make([]ToolResultContent, 0)
-	var toolExecutionErr error
+	var pendingDispatches []toolExecutionRequest
 
 	// Create a map for quick tool lookup
 	toolMap := make(map[string]AgentTool)
@@ -1263,43 +1305,6 @@ func (a *agent) processStepStream(ctx context.Context, stream StreamResponse, op
 	for _, ept := range execProviderTools {
 		execProviderToolMap[ept.GetName()] = ept
 	}
-
-	// Semaphores for controlling parallelism
-	parallelSem := make(chan struct{}, 5)
-	var sequentialMu sync.Mutex
-
-	// Single coordinator goroutine that dispatches tools
-	toolExecutionWg.Go(func() {
-		for req := range toolChan {
-			if req.parallel {
-				parallelSem <- struct{}{}
-				toolExecutionWg.Go(func() {
-					defer func() { <-parallelSem }()
-					result, isCriticalError := a.executeSingleTool(ctx, toolMap, execProviderToolMap, req.toolCall, opts.OnToolResult)
-					toolStateMu.Lock()
-					toolResults = append(toolResults, result)
-					if isCriticalError && toolExecutionErr == nil {
-						if errorResult, ok := result.Result.(ToolResultOutputContentError); ok && errorResult.Error != nil {
-							toolExecutionErr = errorResult.Error
-						}
-					}
-					toolStateMu.Unlock()
-				})
-			} else {
-				sequentialMu.Lock()
-				result, isCriticalError := a.executeSingleTool(ctx, toolMap, execProviderToolMap, req.toolCall, opts.OnToolResult)
-				toolStateMu.Lock()
-				toolResults = append(toolResults, result)
-				if isCriticalError && toolExecutionErr == nil {
-					if errorResult, ok := result.Result.(ToolResultOutputContentError); ok && errorResult.Error != nil {
-						toolExecutionErr = errorResult.Error
-					}
-				}
-				toolStateMu.Unlock()
-				sequentialMu.Unlock()
-			}
-		}
-	})
 
 	// Process stream parts
 	for part := range stream {
@@ -1475,8 +1480,9 @@ func (a *agent) processStepStream(ctx context.Context, stream StreamResponse, op
 					isParallel = tool.Info().Parallel
 				}
 
-				// Send tool call to execution channel
-				toolChan <- toolExecutionRequest{toolCall: validatedToolCall, parallel: isParallel}
+				// Buffer dispatch until stream is fully consumed so that all
+				// OnToolCall callbacks complete before any tool result is written.
+				pendingDispatches = append(pendingDispatches, toolExecutionRequest{toolCall: validatedToolCall, parallel: isParallel})
 
 				// Clean up active tool call
 				delete(activeToolCalls, part.ID)
@@ -1534,7 +1540,58 @@ func (a *agent) processStepStream(ctx context.Context, stream StreamResponse, op
 		}
 	}
 
-	// Close the tool execution channel and wait for all executions to complete
+	// All tool calls are now collected. Create the execution channel sized to
+	// avoid blocking during dispatch, start the coordinator, then flush the batch.
+	toolChan := make(chan toolExecutionRequest, len(pendingDispatches))
+	var toolExecutionWg sync.WaitGroup
+	var toolStateMu sync.Mutex
+	toolResults := make([]ToolResultContent, 0, len(pendingDispatches))
+	var toolExecutionErr error
+
+	// Semaphores for controlling parallelism.
+	parallelSem := make(chan struct{}, 5)
+	var sequentialMu sync.Mutex
+
+	// Single coordinator goroutine that dispatches tools.
+	toolExecutionWg.Go(func() {
+		for req := range toolChan {
+			if req.parallel {
+				parallelSem <- struct{}{}
+				toolExecutionWg.Go(func() {
+					defer func() { <-parallelSem }()
+					result, isCriticalError := a.executeSingleTool(ctx, toolMap, execProviderToolMap, req.toolCall, opts.OnToolResult)
+					toolStateMu.Lock()
+					toolResults = append(toolResults, result)
+					if isCriticalError && toolExecutionErr == nil {
+						if errorResult, ok := result.Result.(ToolResultOutputContentError); ok && errorResult.Error != nil {
+							toolExecutionErr = errorResult.Error
+						}
+					}
+					toolStateMu.Unlock()
+				})
+			} else {
+				sequentialMu.Lock()
+				result, isCriticalError := a.executeSingleTool(ctx, toolMap, execProviderToolMap, req.toolCall, opts.OnToolResult)
+				toolStateMu.Lock()
+				toolResults = append(toolResults, result)
+				if isCriticalError && toolExecutionErr == nil {
+					if errorResult, ok := result.Result.(ToolResultOutputContentError); ok && errorResult.Error != nil {
+						toolExecutionErr = errorResult.Error
+					}
+				}
+				toolStateMu.Unlock()
+				sequentialMu.Unlock()
+			}
+		}
+	})
+
+	// Dispatch all buffered tool calls now that every OnToolCall callback has
+	// been called, then close and wait.
+	for _, req := range pendingDispatches {
+		toolChan <- req
+	}
+
+	// Close the tool execution channel and wait for all executions to complete.
 	close(toolChan)
 	toolExecutionWg.Wait()
 
@@ -1562,7 +1619,7 @@ func (a *agent) processStepStream(ctx context.Context, stream StreamResponse, op
 	}
 
 	// Determine if we should continue (has tool calls and not stopped)
-	shouldContinue := len(stepToolCalls) > 0 && stepFinishReason == FinishReasonToolCalls
+	shouldContinue := len(stepToolCalls) > 0 && stepFinishReason == FinishReasonToolCalls && !hasStopTurn(toolResults)
 
 	return stepExecutionResult{
 		StepResult:     stepResult,

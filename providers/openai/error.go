@@ -13,7 +13,10 @@ import (
 	"github.com/charmbracelet/openai-go"
 )
 
-var openaiContextPattern = regexp.MustCompile(`maximum context length is (\d+) tokens.*?(?:resulted in|requested) (\d+) tokens`)
+var (
+	openaiContextPattern  = regexp.MustCompile(`maximum context length (?:is|of) (\d+) tokens.*?(?:resulted in|requested) ~?(\d+) tokens`)
+	alibabaContextPattern = regexp.MustCompile(`Range of input length should be \[\d+,\s*(\d+)\]`)
+)
 
 func toProviderErr(err error) error {
 	var apiErr *openai.Error
@@ -34,17 +37,28 @@ func toProviderErr(err error) error {
 
 		return providerErr
 	}
+	// Wrap in a `ProviderError` so `.IsRetriable()` works.
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return &fantasy.ProviderError{
+			Title:   "stream transport error",
+			Message: err.Error(),
+			Cause:   err,
+		}
+	}
 	return err
 }
 
 func parseContextTooLargeError(message string, providerErr *fantasy.ProviderError) {
-	matches := openaiContextPattern.FindStringSubmatch(message)
-	if matches == nil {
+	if matches := openaiContextPattern.FindStringSubmatch(message); matches != nil {
+		providerErr.ContextTooLargeErr = true
+		providerErr.ContextMaxTokens, _ = strconv.Atoi(matches[1])
+		providerErr.ContextUsedTokens, _ = strconv.Atoi(matches[2])
 		return
 	}
-	providerErr.ContextTooLargeErr = true
-	providerErr.ContextMaxTokens, _ = strconv.Atoi(matches[1])
-	providerErr.ContextUsedTokens, _ = strconv.Atoi(matches[2])
+	if matches := alibabaContextPattern.FindStringSubmatch(message); matches != nil {
+		providerErr.ContextTooLargeErr = true
+		providerErr.ContextMaxTokens, _ = strconv.Atoi(matches[1])
+	}
 }
 
 func toProviderErrMessage(apiErr *openai.Error) string {

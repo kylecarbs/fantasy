@@ -3,6 +3,7 @@ package anthropic
 import (
 	"cmp"
 	"errors"
+	"io"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -31,6 +32,14 @@ func toProviderErr(err error) error {
 		parseContextTooLargeError(apiErr.Error(), providerErr)
 
 		return providerErr
+	}
+	// Wrap in a `ProviderError` so `.IsRetriable()` works.
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return &fantasy.ProviderError{
+			Title:   "stream transport error",
+			Message: err.Error(),
+			Cause:   err,
+		}
 	}
 	return err
 }

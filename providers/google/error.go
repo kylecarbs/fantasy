@@ -3,6 +3,7 @@ package google
 import (
 	"cmp"
 	"errors"
+	"io"
 	"regexp"
 	"strconv"
 
@@ -15,6 +16,14 @@ var googleContextPattern = regexp.MustCompile(`input token count.*?(\d+).*?excee
 func toProviderErr(err error) error {
 	var apiErr genai.APIError
 	if !errors.As(err, &apiErr) {
+		// Wrap in a `ProviderError` so `.IsRetriable()` works.
+		if errors.Is(err, io.ErrUnexpectedEOF) {
+			return &fantasy.ProviderError{
+				Title:   "stream transport error",
+				Message: err.Error(),
+				Cause:   err,
+			}
+		}
 		return err
 	}
 
