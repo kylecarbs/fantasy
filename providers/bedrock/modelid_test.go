@@ -14,11 +14,13 @@ func TestNormalizeModelID(t *testing.T) {
 	const legacyModel = "anthropic.claude-haiku-4-5-20251001-v1:0"
 
 	tests := []struct {
-		name           string
-		envRegion      string
-		explicitRegion string
-		modelID        string
-		want           string
+		name            string
+		envRegion       string
+		defaultRegion   string
+		explicitRegion  string
+		useDefaultChain bool
+		modelID         string
+		want            string
 	}{
 		{
 			name:      "qualified us passes through",
@@ -81,6 +83,25 @@ func TestNormalizeModelID(t *testing.T) {
 			want:      "us." + legacyModel,
 		},
 		{
+			// On the default credential chain we mirror the inner provider's
+			// config.LoadDefaultConfig, which honours AWS_DEFAULT_REGION when
+			// AWS_REGION is unset. The prefix must follow the request region.
+			name:            "default chain reads AWS_DEFAULT_REGION",
+			defaultRegion:   "eu-west-1",
+			useDefaultChain: true,
+			modelID:         legacyModel,
+			want:            "eu." + legacyModel,
+		},
+		{
+			// The API-key/skip-auth path uses bedrockBasicAuthConfig, which never
+			// consults the default chain, so AWS_DEFAULT_REGION must NOT influence
+			// the prefix (it would otherwise diverge from the signed region).
+			name:          "api key path ignores AWS_DEFAULT_REGION",
+			defaultRegion: "eu-west-1",
+			modelID:       legacyModel,
+			want:          "us." + legacyModel,
+		},
+		{
 			name:    "non anthropic models pass through",
 			modelID: "amazon.nova-pro-v1:0",
 			want:    "amazon.nova-pro-v1:0",
@@ -96,7 +117,8 @@ func TestNormalizeModelID(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("AWS_REGION", tt.envRegion)
-			require.Equal(t, tt.want, normalizeModelID(tt.modelID, tt.explicitRegion))
+			t.Setenv("AWS_DEFAULT_REGION", tt.defaultRegion)
+			require.Equal(t, tt.want, normalizeModelID(t.Context(), tt.modelID, tt.explicitRegion, tt.useDefaultChain))
 		})
 	}
 }
