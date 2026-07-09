@@ -236,6 +236,13 @@ func TestValidatePreviousResponseIDPrompt(t *testing.T) {
 	}
 }
 
+func TestResponsesModelAllowlist_GPT56Sol(t *testing.T) {
+	t.Parallel()
+
+	require.True(t, IsResponsesModel("gpt-5.6-sol"))
+	require.True(t, IsResponsesReasoningModel("gpt-5.6-sol"))
+}
+
 func TestResponsesProviderMetadata_Helper(t *testing.T) {
 	t.Parallel()
 
