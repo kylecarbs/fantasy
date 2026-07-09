@@ -240,6 +240,15 @@ func TestValidatePreviousResponseIDPrompt(t *testing.T) {
 	}
 }
 
+func TestResponsesModelAllowlist_GPT56Family(t *testing.T) {
+	t.Parallel()
+
+	for _, modelID := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} {
+		require.True(t, IsResponsesModel(modelID), modelID)
+		require.True(t, IsResponsesReasoningModel(modelID), modelID)
+	}
+}
+
 func TestResponsesProviderMetadata_Helper(t *testing.T) {
 	t.Parallel()
 
