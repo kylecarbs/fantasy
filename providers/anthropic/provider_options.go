@@ -8,11 +8,16 @@ import (
 )
 
 // Effort represents the output effort level for Anthropic models.
-//
-// This maps to Messages API `output_config.effort`.
+// EffortMinimal is normalized to EffortLow before sending, EffortXHigh
+// falls back to EffortMax on models without xhigh support, and
+// EffortNone disables thinking.
 type Effort string
 
 const (
+	// EffortNone disables reasoning.
+	EffortNone Effort = "none"
+	// EffortMinimal represents minimal output effort.
+	EffortMinimal Effort = "minimal"
 	// EffortLow represents low output effort.
 	EffortLow Effort = "low"
 	// EffortMedium represents medium output effort.

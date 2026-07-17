@@ -640,7 +640,7 @@ func TestGenerate_SendsOutputConfigEffort(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	model, err := provider.LanguageModel(context.Background(), "claude-sonnet-4-20250514")
+	model, err := provider.LanguageModel(context.Background(), "claude-sonnet-4-6")
 	require.NoError(t, err)
 
 	effort := EffortMedium
@@ -658,6 +658,340 @@ func TestGenerate_SendsOutputConfigEffort(t *testing.T) {
 	requireAnthropicEffort(t, call.body, EffortMedium)
 }
 
+func TestSupportsAdaptiveThinking(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		model string
+		want  bool
+	}{
+		{model: "claude-sonnet-4-6", want: true},
+		{model: "claude-sonnet-5", want: true},
+		{model: "claude-opus-4-7-20260101", want: true},
+		{model: "claude-opus-4-10-20260101", want: true},
+		{model: "claude-fable-5", want: true},
+		{model: "claude-mythos-5", want: true},
+		{model: "claude-mythos-preview", want: true},
+		{model: "us.anthropic.claude-opus-4-8-20260101-v1:0", want: true},
+		{model: "claude-opus-4-7@20260101", want: true},
+		{model: "claude-sonnet-4-6@20250929", want: true},
+		{model: "claude-haiku-4-5@20251001", want: false},
+		{model: "claude-3-5-sonnet-v2@20241022", want: false},
+		{model: "claude-haiku-4-5", want: false},
+		{model: "claude-haiku-4-5-20251001", want: false},
+		{model: "claude-sonnet-4-5-20250929", want: false},
+		{model: "claude-sonnet-4-20250514", want: false},
+		{model: "claude-3-5-haiku-20241022", want: false},
+		{model: "claude-3-7-sonnet-20250219", want: false},
+		{model: "us.anthropic.claude-haiku-4-5-20251001-v1:0", want: false},
+		{model: "global.anthropic.claude-3-5-sonnet-20241022-v2:0", want: false},
+		{model: "claude-2.1", want: false},
+		{model: "not-a-claude-model", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, supportsAdaptiveThinking(tt.model))
+		})
+	}
+}
+
+func ptrTo[T any](v T) *T {
+	return &v
+}
+
+func TestGenerate_LegacyEffortConversion(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		model           string
+		options         *ProviderOptions
+		maxOutputTokens *int64
+		wantBudget      int64
+	}{
+		{
+			name:            "haiku 4.5 derives budget from max tokens",
+			model:           "claude-haiku-4-5",
+			options:         &ProviderOptions{Effort: ptrTo(EffortHigh)},
+			maxOutputTokens: ptrTo(int64(4096)),
+			wantBudget:      3276,
+		},
+		{
+			name:            "small max tokens omits thinking",
+			model:           "claude-haiku-4-5",
+			options:         &ProviderOptions{Effort: ptrTo(EffortHigh)},
+			maxOutputTokens: ptrTo(int64(256)),
+			wantBudget:      0,
+		},
+		{
+			name:            "minimal effort uses the budget floor",
+			model:           "claude-haiku-4-5",
+			options:         &ProviderOptions{Effort: ptrTo(EffortMinimal)},
+			maxOutputTokens: ptrTo(int64(4096)),
+			wantBudget:      1024,
+		},
+		{
+			name:            "bedrock prefixed haiku 4.5 derives budget",
+			model:           "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+			options:         &ProviderOptions{Effort: ptrTo(EffortHigh)},
+			maxOutputTokens: ptrTo(int64(4096)),
+			wantBudget:      3276,
+		},
+		{
+			name:            "claude 3.7 derives budget",
+			model:           "claude-3-7-sonnet-20250219",
+			options:         &ProviderOptions{Effort: ptrTo(EffortMedium)},
+			maxOutputTokens: ptrTo(int64(4096)),
+			wantBudget:      2048,
+		},
+		{
+			name:            "pre-3.7 model omits thinking",
+			model:           "claude-3-5-haiku-20241022",
+			options:         &ProviderOptions{Effort: ptrTo(EffortMedium)},
+			maxOutputTokens: ptrTo(int64(4096)),
+			wantBudget:      0,
+		},
+		{
+			name:            "bedrock prefixed pre-3.7 model omits thinking",
+			model:           "anthropic.claude-3-5-sonnet-20241022-v2:0",
+			options:         &ProviderOptions{Effort: ptrTo(EffortHigh)},
+			maxOutputTokens: ptrTo(int64(4096)),
+			wantBudget:      0,
+		},
+		{
+			name:  "derived budget wins over configured thinking budget",
+			model: "claude-haiku-4-5",
+			options: &ProviderOptions{
+				Effort:   ptrTo(EffortHigh),
+				Thinking: &ThinkingProviderOption{BudgetTokens: 2048},
+			},
+			maxOutputTokens: ptrTo(int64(4096)),
+			wantBudget:      3276,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			server, calls := newAnthropicJSONServer(mockAnthropicGenerateResponse())
+			defer server.Close()
+
+			provider, err := New(
+				WithAPIKey("test-api-key"),
+				WithBaseURL(server.URL),
+			)
+			require.NoError(t, err)
+
+			model, err := provider.LanguageModel(context.Background(), tt.model)
+			require.NoError(t, err)
+
+			_, err = model.Generate(context.Background(), fantasy.Call{
+				Prompt:          testPrompt(),
+				MaxOutputTokens: tt.maxOutputTokens,
+				ProviderOptions: NewProviderOptions(tt.options),
+			})
+			require.NoError(t, err)
+
+			call := awaitAnthropicCall(t, calls)
+			require.NotContains(t, call.body, "output_config")
+			if tt.wantBudget == 0 {
+				require.NotContains(t, call.body, "thinking")
+				return
+			}
+			thinking, ok := call.body["thinking"].(map[string]any)
+			require.True(t, ok)
+			require.Equal(t, "enabled", thinking["type"])
+			require.InDelta(t, tt.wantBudget, thinking["budget_tokens"], 0)
+		})
+	}
+}
+
+func TestGenerate_Opus45KeepsEffortParameter(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		model      string
+		effort     Effort
+		wantEffort Effort
+	}{
+		{model: "claude-opus-4-5-20251101", effort: EffortHigh, wantEffort: EffortHigh},
+		{model: "claude-opus-4-5-20251101", effort: EffortMinimal, wantEffort: EffortLow},
+		{model: "claude-opus-4-5-20251101", effort: EffortXHigh, wantEffort: EffortHigh},
+		{model: "claude-opus-4-5-20251101", effort: EffortMax, wantEffort: EffortHigh},
+		{model: "us.anthropic.claude-opus-4-5-20251101-v1:0", effort: EffortHigh, wantEffort: EffortHigh},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model+"/"+string(tt.effort), func(t *testing.T) {
+			t.Parallel()
+
+			server, calls := newAnthropicJSONServer(mockAnthropicGenerateResponse())
+			defer server.Close()
+
+			provider, err := New(
+				WithAPIKey("test-api-key"),
+				WithBaseURL(server.URL),
+			)
+			require.NoError(t, err)
+
+			model, err := provider.LanguageModel(context.Background(), tt.model)
+			require.NoError(t, err)
+
+			_, err = model.Generate(context.Background(), fantasy.Call{
+				Prompt:          testPrompt(),
+				MaxOutputTokens: ptrTo(int64(4096)),
+				ProviderOptions: NewProviderOptions(&ProviderOptions{Effort: ptrTo(tt.effort)}),
+			})
+			require.NoError(t, err)
+
+			call := awaitAnthropicCall(t, calls)
+			outputConfig, ok := call.body["output_config"].(map[string]any)
+			require.True(t, ok)
+			require.Equal(t, string(tt.wantEffort), outputConfig["effort"])
+			thinking, ok := call.body["thinking"].(map[string]any)
+			require.True(t, ok)
+			require.Equal(t, "enabled", thinking["type"])
+		})
+	}
+}
+
+func TestGenerate_EffortNoneDisablesThinking(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		model        string
+		wantDisabled bool
+	}{
+		{model: "claude-haiku-4-5"},
+		{model: "claude-sonnet-4-6"},
+		{model: "claude-sonnet-5", wantDisabled: true},
+		{model: "claude-mythos-preview"},
+		{model: "claude-fable-5"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			t.Parallel()
+
+			server, calls := newAnthropicJSONServer(mockAnthropicGenerateResponse())
+			defer server.Close()
+
+			provider, err := New(
+				WithAPIKey("test-api-key"),
+				WithBaseURL(server.URL),
+			)
+			require.NoError(t, err)
+
+			languageModel, err := provider.LanguageModel(context.Background(), tt.model)
+			require.NoError(t, err)
+
+			_, err = languageModel.Generate(context.Background(), fantasy.Call{
+				Prompt: testPrompt(),
+				ProviderOptions: NewProviderOptions(&ProviderOptions{
+					Effort: ptrTo(EffortNone),
+				}),
+			})
+			require.NoError(t, err)
+
+			call := awaitAnthropicCall(t, calls)
+			if tt.wantDisabled {
+				require.Equal(t, map[string]any{"type": "disabled"}, call.body["thinking"])
+			} else {
+				require.NotContains(t, call.body, "thinking")
+			}
+			require.NotContains(t, call.body, "output_config")
+		})
+	}
+}
+
+func TestGenerate_NormalizesEffortForAdaptiveModels(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		model  string
+		effort Effort
+		want   Effort
+	}{
+		{model: "claude-sonnet-4-6", effort: EffortMinimal, want: EffortLow},
+		{model: "claude-sonnet-4-6", effort: EffortXHigh, want: EffortMax},
+		{model: "claude-sonnet-4-6", effort: EffortHigh, want: EffortHigh},
+		{model: "claude-opus-4-7-20260101", effort: EffortXHigh, want: EffortXHigh},
+		{model: "claude-sonnet-5", effort: EffortXHigh, want: EffortXHigh},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model+"/"+string(tt.effort), func(t *testing.T) {
+			t.Parallel()
+
+			server, calls := newAnthropicJSONServer(mockAnthropicGenerateResponse())
+			defer server.Close()
+
+			provider, err := New(
+				WithAPIKey("test-api-key"),
+				WithBaseURL(server.URL),
+			)
+			require.NoError(t, err)
+
+			model, err := provider.LanguageModel(context.Background(), tt.model)
+			require.NoError(t, err)
+
+			_, err = model.Generate(context.Background(), fantasy.Call{
+				Prompt: testPrompt(),
+				ProviderOptions: NewProviderOptions(&ProviderOptions{
+					Effort: ptrTo(tt.effort),
+				}),
+			})
+			require.NoError(t, err)
+
+			call := awaitAnthropicCall(t, calls)
+			requireAnthropicEffort(t, call.body, tt.want)
+		})
+	}
+}
+
+func TestGenerate_LegacyEffortStripsSamplingParams(t *testing.T) {
+	t.Parallel()
+
+	server, calls := newAnthropicJSONServer(mockAnthropicGenerateResponse())
+	defer server.Close()
+
+	provider, err := New(
+		WithAPIKey("test-api-key"),
+		WithBaseURL(server.URL),
+	)
+	require.NoError(t, err)
+
+	model, err := provider.LanguageModel(context.Background(), "claude-haiku-4-5")
+	require.NoError(t, err)
+
+	resp, err := model.Generate(context.Background(), fantasy.Call{
+		Prompt:      testPrompt(),
+		Temperature: ptrTo(0.7),
+		TopP:        ptrTo(0.9),
+		TopK:        ptrTo(int64(40)),
+		ProviderOptions: NewProviderOptions(&ProviderOptions{
+			Effort: ptrTo(EffortHigh),
+		}),
+	})
+	require.NoError(t, err)
+
+	call := awaitAnthropicCall(t, calls)
+	require.NotContains(t, call.body, "temperature")
+	require.NotContains(t, call.body, "top_p")
+	require.NotContains(t, call.body, "top_k")
+
+	var stripped []string
+	for _, warning := range resp.Warnings {
+		if warning.Type == fantasy.CallWarningTypeUnsupportedSetting {
+			stripped = append(stripped, warning.Setting)
+		}
+	}
+	require.ElementsMatch(t, []string{"temperature", "TopP", "TopK"}, stripped)
+}
+
 func TestGenerate_SendsThinkingDisplay(t *testing.T) {
 	t.Parallel()
 
@@ -671,7 +1005,7 @@ func TestGenerate_SendsThinkingDisplay(t *testing.T) {
 	}{
 		{
 			name:  "explicit display with adaptive thinking",
-			model: "claude-sonnet-4-20250514",
+			model: "claude-sonnet-4-6",
 			options: func() *ProviderOptions {
 				effort := EffortMedium
 				display := ThinkingDisplayOmitted
@@ -679,6 +1013,18 @@ func TestGenerate_SendsThinkingDisplay(t *testing.T) {
 			},
 			wantType:    "adaptive",
 			wantDisplay: "omitted",
+		},
+		{
+			name:  "explicit display with legacy effort thinking",
+			model: "claude-haiku-4-5",
+			options: func() *ProviderOptions {
+				effort := EffortMedium
+				display := ThinkingDisplayOmitted
+				return &ProviderOptions{Effort: &effort, ThinkingDisplay: &display}
+			},
+			wantType:    "enabled",
+			wantDisplay: "omitted",
+			wantBudget:  2048,
 		},
 		{
 			name:  "explicit display with budget thinking",
@@ -742,6 +1088,14 @@ func TestGenerate_SendsThinkingDisplay(t *testing.T) {
 			},
 			wantType:    "adaptive",
 			wantDisplay: "summarized",
+		},
+		{
+			name:  "claude 5 models use adaptive thinking when budget thinking configured",
+			model: "claude-sonnet-5",
+			options: func() *ProviderOptions {
+				return &ProviderOptions{Thinking: &ThinkingProviderOption{BudgetTokens: 2048}}
+			},
+			wantType: "adaptive",
 		},
 		{
 			name:  "older opus models keep provider default",
@@ -863,7 +1217,7 @@ func TestStream_SendsOutputConfigEffort(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	model, err := provider.LanguageModel(context.Background(), "claude-sonnet-4-20250514")
+	model, err := provider.LanguageModel(context.Background(), "claude-sonnet-4-6")
 	require.NoError(t, err)
 
 	effort := EffortHigh
