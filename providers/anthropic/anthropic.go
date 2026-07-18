@@ -55,7 +55,178 @@ func defaultsToAdaptiveThinking(model string) bool {
 }
 
 func requiresAdaptiveThinking(model string) bool {
-	return defaultsToAdaptiveThinking(model) || defaultsToOmittedOpusThinkingDisplay(model)
+	return defaultsToAdaptiveThinking(model) || defaultsToOmittedOpusThinkingDisplay(model) || thinkingOnByDefault(model)
+}
+
+// Claude models before 4.6 reject adaptive thinking. Unknown versions use
+// legacy budget thinking unless explicitly allowlisted.
+func supportsAdaptiveThinking(model string) bool {
+	if defaultsToAdaptiveThinking(model) {
+		return true
+	}
+	major, minor, ok := claudeVersion(model)
+	if !ok {
+		return false
+	}
+	return major > 4 || (major == 4 && minor >= 6)
+}
+
+func claudeVersion(model string) (major, minor int, ok bool) {
+	model = strings.ToLower(strings.TrimSpace(model))
+	_, rest, found := strings.Cut(model, "claude-")
+	if !found {
+		return 0, 0, false
+	}
+	// Vertex model IDs put the version before an "@<date>" suffix
+	// (claude-opus-4-7@20260101).
+	rest, _, _ = strings.Cut(rest, "@")
+	parts := strings.Split(rest, "-")
+	for i, part := range parts {
+		v, valid := shortVersionComponent(part)
+		if !valid {
+			continue
+		}
+		major = v
+		if i+1 < len(parts) {
+			if m, validMinor := shortVersionComponent(parts[i+1]); validMinor {
+				minor = m
+			}
+		}
+		return major, minor, true
+	}
+	return 0, 0, false
+}
+
+func shortVersionComponent(s string) (int, bool) {
+	if len(s) == 0 || len(s) > 2 {
+		return 0, false
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, false
+	}
+	return v, true
+}
+
+// Opus 4.5 accepts output_config.effort alongside manual budget thinking,
+// unlike other pre-adaptive models.
+func isOpus45(model string) bool {
+	major, minor, ok := claudeVersion(model)
+	return ok && major == 4 && minor == 5 &&
+		strings.Contains(strings.ToLower(strings.TrimSpace(model)), "opus")
+}
+
+// Opus 4.5 supports only low, medium, and high effort.
+func normalizeOpus45Effort(effort Effort) Effort {
+	switch effort {
+	case EffortMinimal:
+		return EffortLow
+	case EffortXHigh, EffortMax:
+		return EffortHigh
+	default:
+		return effort
+	}
+}
+
+// Mythos and Fable models run adaptive thinking unconditionally and reject
+// thinking: {type: "disabled"} with an HTTP 400.
+func rejectsDisabledThinking(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	return strings.Contains(model, "claude-mythos") || strings.Contains(model, "claude-fable")
+}
+
+// Claude 5+ models run adaptive thinking when the request omits the thinking
+// field, so an explicit opt-out must send thinking: {type: "disabled"}.
+func thinkingOnByDefault(model string) bool {
+	major, _, ok := claudeVersion(model)
+	return ok && major >= 5
+}
+
+// Extended thinking with budget_tokens shipped with Claude 3.7; older
+// models reject the thinking field entirely.
+func supportsBudgetThinking(model string) bool {
+	major, minor, ok := claudeVersion(model)
+	return ok && (major > 3 || (major == 3 && minor >= 7))
+}
+
+// The xhigh effort tier shipped with Claude Opus 4.7; 4.6-era adaptive
+// models accept only low, medium, high, and max.
+func supportsXHighEffort(model string) bool {
+	major, minor, ok := claudeVersion(model)
+	return ok && (major > 4 || (major == 4 && minor >= 7))
+}
+
+// Anthropic does not accept minimal for output_config.effort, and xhigh
+// only on models that support it.
+func normalizeEffort(effort Effort, model string) Effort {
+	switch effort {
+	case EffortMinimal:
+		return EffortLow
+	case EffortXHigh:
+		if !supportsXHighEffort(model) {
+			return EffortMax
+		}
+		return effort
+	default:
+		return effort
+	}
+}
+
+// Anthropic requires at least 1024 thinking tokens. Smaller derived budgets
+// disable thinking to preserve the requested output limit.
+func legacyEffortBudget(effort Effort, maxTokens int64) int64 {
+	const minBudget = 1024
+	var budget int64
+	switch effort {
+	case EffortMinimal:
+		budget = minBudget
+	case EffortLow:
+		budget = int64(float64(maxTokens) * 0.2)
+	case EffortHigh:
+		budget = int64(float64(maxTokens) * 0.8)
+	case EffortXHigh:
+		budget = int64(float64(maxTokens) * 0.9)
+	case EffortMax:
+		budget = int64(float64(maxTokens) * 0.95)
+	default:
+		budget = int64(float64(maxTokens) * 0.5)
+	}
+	// budget_tokens must be strictly less than max_tokens.
+	if budget >= maxTokens {
+		budget = maxTokens - 1
+	}
+	if budget < minBudget {
+		return 0
+	}
+	return budget
+}
+
+func stripThinkingUnsupportedParams(params *anthropic.MessageNewParams, call fantasy.Call, warnings []fantasy.CallWarning) []fantasy.CallWarning {
+	if call.Temperature != nil {
+		params.Temperature = param.Opt[float64]{}
+		warnings = append(warnings, fantasy.CallWarning{
+			Type:    fantasy.CallWarningTypeUnsupportedSetting,
+			Setting: "temperature",
+			Details: "temperature is not supported when thinking is enabled",
+		})
+	}
+	if call.TopP != nil {
+		params.TopP = param.Opt[float64]{}
+		warnings = append(warnings, fantasy.CallWarning{
+			Type:    fantasy.CallWarningTypeUnsupportedSetting,
+			Setting: "TopP",
+			Details: "TopP is not supported when thinking is enabled",
+		})
+	}
+	if call.TopK != nil {
+		params.TopK = param.Opt[int64]{}
+		warnings = append(warnings, fantasy.CallWarning{
+			Type:    fantasy.CallWarningTypeUnsupportedSetting,
+			Setting: "TopK",
+			Details: "TopK is not supported when thinking is enabled",
+		})
+	}
+	return warnings
 }
 
 func setThinkingDisplay(param interface{ SetExtraFields(map[string]any) }, display ThinkingDisplay) {
@@ -392,14 +563,49 @@ func (a languageModel) prepareParams(call fantasy.Call) (
 	switch {
 	case providerOptions.Effort != nil:
 		effort := *providerOptions.Effort
-		params.OutputConfig = anthropic.OutputConfigParam{
-			Effort: anthropic.OutputConfigEffort(effort),
+		switch {
+		case effort == EffortNone:
+			switch {
+			case rejectsDisabledThinking(a.modelID):
+				warnings = append(warnings, fantasy.CallWarning{
+					Type:    fantasy.CallWarningTypeOther,
+					Message: "thinking cannot be disabled on " + a.modelID,
+				})
+			case thinkingOnByDefault(a.modelID):
+				disabled := anthropic.NewThinkingConfigDisabledParam()
+				params.Thinking.OfDisabled = &disabled
+			}
+		case supportsAdaptiveThinking(a.modelID):
+			params.OutputConfig = anthropic.OutputConfigParam{
+				Effort: anthropic.OutputConfigEffort(normalizeEffort(effort, a.modelID)),
+			}
+			adaptive := anthropic.NewThinkingConfigAdaptiveParam()
+			if display, ok := thinkingDisplay(providerOptions, a.modelID); ok {
+				setThinkingDisplay(&adaptive, display)
+			}
+			params.Thinking.OfAdaptive = &adaptive
+		default:
+			if isOpus45(a.modelID) {
+				params.OutputConfig = anthropic.OutputConfigParam{
+					Effort: anthropic.OutputConfigEffort(normalizeOpus45Effort(effort)),
+				}
+			}
+			if !supportsBudgetThinking(a.modelID) {
+				warnings = append(warnings, fantasy.CallWarning{
+					Type:    fantasy.CallWarningTypeUnsupportedSetting,
+					Setting: "effort",
+					Details: "thinking is not supported on " + a.modelID,
+				})
+				break
+			}
+			if budget := legacyEffortBudget(effort, params.MaxTokens); budget > 0 {
+				params.Thinking = anthropic.ThinkingConfigParamOfEnabled(budget)
+				if display, ok := thinkingDisplay(providerOptions, a.modelID); ok {
+					setThinkingDisplay(params.Thinking.OfEnabled, display)
+				}
+				warnings = stripThinkingUnsupportedParams(params, call, warnings)
+			}
 		}
-		adaptive := anthropic.NewThinkingConfigAdaptiveParam()
-		if display, ok := thinkingDisplay(providerOptions, a.modelID); ok {
-			setThinkingDisplay(&adaptive, display)
-		}
-		params.Thinking.OfAdaptive = &adaptive
 	case providerOptions.Thinking != nil:
 		if providerOptions.Thinking.BudgetTokens == 0 {
 			return nil, nil, nil, nil, &fantasy.Error{Title: "no budget", Message: "thinking requires budget"}
@@ -416,30 +622,7 @@ func (a languageModel) prepareParams(call fantasy.Call) (
 				setThinkingDisplay(params.Thinking.OfEnabled, display)
 			}
 		}
-		if call.Temperature != nil {
-			params.Temperature = param.Opt[float64]{}
-			warnings = append(warnings, fantasy.CallWarning{
-				Type:    fantasy.CallWarningTypeUnsupportedSetting,
-				Setting: "temperature",
-				Details: "temperature is not supported when thinking is enabled",
-			})
-		}
-		if call.TopP != nil {
-			params.TopP = param.Opt[float64]{}
-			warnings = append(warnings, fantasy.CallWarning{
-				Type:    fantasy.CallWarningTypeUnsupportedSetting,
-				Setting: "TopP",
-				Details: "TopP is not supported when thinking is enabled",
-			})
-		}
-		if call.TopK != nil {
-			params.TopK = param.Opt[int64]{}
-			warnings = append(warnings, fantasy.CallWarning{
-				Type:    fantasy.CallWarningTypeUnsupportedSetting,
-				Setting: "TopK",
-				Details: "TopK is not supported when thinking is enabled",
-			})
-		}
+		warnings = stripThinkingUnsupportedParams(params, call, warnings)
 	case defaultsToAdaptiveThinking(a.modelID):
 		adaptive := anthropic.NewThinkingConfigAdaptiveParam()
 		if display, ok := thinkingDisplay(providerOptions, a.modelID); ok {
