@@ -4,6 +4,7 @@ package openai
 import (
 	"encoding/json"
 	"slices"
+	"strings"
 
 	"charm.land/fantasy"
 )
@@ -235,6 +236,14 @@ var responsesReasoningModelIDs = []string{
 	"gpt-5.4-codex",
 	"gpt-5.5",
 	"gpt-5.5-pro",
+	"gpt-5.5-mini",
+	"gpt-5.5-nano",
+	"gpt-5.5-codex",
+	"gpt-5.6",
+	"gpt-5.6-pro",
+	"gpt-5.6-mini",
+	"gpt-5.6-nano",
+	"gpt-5.6-codex",
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
@@ -289,12 +298,16 @@ func ParseResponsesOptions(data map[string]any) (*ResponsesProviderOptions, erro
 
 // IsResponsesModel checks if a model ID is a Responses API model for OpenAI.
 func IsResponsesModel(modelID string) bool {
-	return slices.Contains(responsesModelIDs, modelID)
+	return slices.Contains(responsesModelIDs, modelID) ||
+		strings.Contains(strings.ToLower(modelID), "gpt-4") ||
+		strings.Contains(strings.ToLower(modelID), "gpt-5")
 }
 
 // IsResponsesReasoningModel checks if a model ID is a Responses API reasoning model for OpenAI.
 func IsResponsesReasoningModel(modelID string) bool {
-	return slices.Contains(responsesReasoningModelIDs, modelID)
+	return slices.Contains(responsesReasoningModelIDs, modelID) ||
+		strings.Contains(strings.ToLower(modelID), "gpt-4") ||
+		strings.Contains(strings.ToLower(modelID), "gpt-5")
 }
 
 // SearchContextSize controls how much context window space the

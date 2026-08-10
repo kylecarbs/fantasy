@@ -1275,11 +1275,21 @@ func TestStream_RequiresMessageStopBeforeFinish(t *testing.T) {
 			wantRetryable: true,
 		},
 		{
-			name: "provider error event is preserved",
+			// api_error is a temporary provider-side fault, so it is worth
+			// retrying even though it arrived inside a 200 response.
+			name: "provider error event is preserved and retried",
 			chunks: []string{
 				anthropicSSEEvent("error", `{"type":"error","error":{"type":"api_error","message":"stream down"}}`),
 			},
+			wantRetryable:  true,
 			wantErrContain: "stream down",
+		},
+		{
+			name: "permanent error event is not retried",
+			chunks: []string{
+				anthropicSSEEvent("error", `{"type":"error","error":{"type":"invalid_request_error","message":"bad request"}}`),
+			},
+			wantErrContain: "bad request",
 		},
 	}
 
@@ -1332,7 +1342,6 @@ func TestStream_RequiresMessageStopBeforeFinish(t *testing.T) {
 			if tt.wantRetryable {
 				require.ErrorAs(t, errorParts[0].Error, &providerErr)
 				require.True(t, providerErr.IsRetryable())
-				require.ErrorIs(t, providerErr.Cause, io.ErrUnexpectedEOF)
 			} else {
 				require.NotErrorIs(t, errorParts[0].Error, io.ErrUnexpectedEOF)
 				if errors.As(errorParts[0].Error, &providerErr) {
@@ -3826,4 +3835,27 @@ func TestStream_TruncatedWithoutStopReason(t *testing.T) {
 	require.ErrorAs(t, errPart.Error, &providerErr)
 	require.True(t, providerErr.IsRetryable())
 	require.ErrorIs(t, providerErr.Cause, io.ErrUnexpectedEOF)
+}
+
+func TestMapFinishReason(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		reason   string
+		expected fantasy.FinishReason
+	}{
+		{"end_turn", fantasy.FinishReasonStop},
+		{"pause_turn", fantasy.FinishReasonStop},
+		{"stop_sequence", fantasy.FinishReasonStop},
+		{"max_tokens", fantasy.FinishReasonLength},
+		{"model_context_window_exceeded", fantasy.FinishReasonLength},
+		{"tool_use", fantasy.FinishReasonToolCalls},
+		{"refusal", fantasy.FinishReasonContentFilter},
+		{"", fantasy.FinishReasonUnknown},
+		{"unrecognized_future_reason", fantasy.FinishReasonUnknown},
+	}
+
+	for _, tc := range tests {
+		require.Equal(t, tc.expected, mapFinishReason(tc.reason), "stop_reason %q", tc.reason)
+	}
 }

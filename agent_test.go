@@ -850,6 +850,167 @@ func TestResponseContent_Getters_MultipleItems(t *testing.T) {
 	require.Equal(t, "image/png", files[1].MediaType)
 }
 
+func TestHasNonBlankText(t *testing.T) {
+	t.Parallel()
+
+	t.Run("single text block", func(t *testing.T) {
+		content := ResponseContent{TextContent{Text: "hello"}}
+		require.True(t, hasNonBlankText(content))
+	})
+
+	t.Run("text among tool calls", func(t *testing.T) {
+		content := ResponseContent{
+			TextContent{Text: "preamble"},
+			ToolCallContent{ToolCallID: "c1", ToolName: "t", Input: "{}"},
+			TextContent{Text: "final answer"},
+		}
+		require.True(t, hasNonBlankText(content))
+	})
+
+	t.Run("whitespace-only is blank", func(t *testing.T) {
+		content := ResponseContent{
+			TextContent{Text: "   "},
+		}
+		require.False(t, hasNonBlankText(content))
+	})
+
+	t.Run("mixed whitespace and real text", func(t *testing.T) {
+		content := ResponseContent{
+			TextContent{Text: "   "},
+			TextContent{Text: "real"},
+		}
+		require.True(t, hasNonBlankText(content))
+	})
+
+	t.Run("empty content", func(t *testing.T) {
+		require.False(t, hasNonBlankText(ResponseContent{}))
+	})
+
+	t.Run("no text blocks", func(t *testing.T) {
+		content := ResponseContent{
+			ToolCallContent{ToolCallID: "c1", ToolName: "t", Input: "{}"},
+		}
+		require.False(t, hasNonBlankText(content))
+	})
+}
+
+func TestFinalResponse(t *testing.T) {
+	t.Parallel()
+
+	t.Run("last step has text", func(t *testing.T) {
+		steps := []StepResult{
+			{Response: Response{Content: ResponseContent{TextContent{Text: "earlier"}}}},
+			{Response: Response{Content: ResponseContent{TextContent{Text: "final"}}}},
+		}
+		resp := finalResponse(steps)
+		require.Equal(t, "final", resp.Content.Text())
+	})
+
+	t.Run("last step tool-only falls back to earlier text", func(t *testing.T) {
+		steps := []StepResult{
+			{Response: Response{Content: ResponseContent{TextContent{Text: "has text"}}}},
+			{Response: Response{Content: ResponseContent{
+				ToolCallContent{ToolCallID: "c1", ToolName: "t", Input: "{}"},
+			}}},
+		}
+		resp := finalResponse(steps)
+		require.Equal(t, "has text", resp.Content.Text())
+	})
+
+	t.Run("all steps tool-only returns last", func(t *testing.T) {
+		steps := []StepResult{
+			{Response: Response{Content: ResponseContent{
+				ToolCallContent{ToolCallID: "c1", ToolName: "t1", Input: "{}"},
+			}}},
+			{Response: Response{Content: ResponseContent{
+				ToolCallContent{ToolCallID: "c2", ToolName: "t2", Input: "{}"},
+			}}},
+		}
+		resp := finalResponse(steps)
+		toolCalls := resp.Content.ToolCalls()
+		require.Len(t, toolCalls, 1)
+		require.Equal(t, "c2", toolCalls[0].ToolCallID)
+	})
+
+	t.Run("empty steps", func(t *testing.T) {
+		resp := finalResponse(nil)
+		require.Equal(t, "", resp.Content.Text())
+	})
+
+	t.Run("single step with text", func(t *testing.T) {
+		steps := []StepResult{
+			{Response: Response{Content: ResponseContent{TextContent{Text: "only"}}}},
+		}
+		resp := finalResponse(steps)
+		require.Equal(t, "only", resp.Content.Text())
+	})
+
+	t.Run("skips whitespace-only steps", func(t *testing.T) {
+		steps := []StepResult{
+			{Response: Response{Content: ResponseContent{TextContent{Text: "real"}}}},
+			{Response: Response{Content: ResponseContent{TextContent{Text: "   "}}}},
+		}
+		resp := finalResponse(steps)
+		require.Equal(t, "real", resp.Content.Text())
+	})
+}
+
+func TestAgent_Generate_ToolOnlyFinalStep_PreservesEarlierText(t *testing.T) {
+	t.Parallel()
+
+	type TestInput struct {
+		Value string `json:"value" description:"Test value"`
+	}
+
+	tool := NewAgentTool(
+		"mytool",
+		"A test tool",
+		func(ctx context.Context, input TestInput, _ ToolCall) (ToolResponse, error) {
+			return ToolResponse{Content: "done", IsError: false}, nil
+		},
+	)
+
+	callCount := 0
+	model := &mockLanguageModel{
+		generateFunc: func(ctx context.Context, call Call) (*Response, error) {
+			callCount++
+			switch callCount {
+			case 1:
+				// First step: text + tool call (model explains then acts).
+				return &Response{
+					Content: []Content{
+						TextContent{Text: "Let me check that."},
+						ToolCallContent{
+							ToolCallID: "call-1",
+							ToolName:   "mytool",
+							Input:      `{"value":"x"}`,
+						},
+					},
+					FinishReason: FinishReasonToolCalls,
+				}, nil
+			case 2:
+				// Second step: tool result only, no text. Model stops here.
+				return &Response{
+					Content:      []Content{},
+					FinishReason: FinishReasonStop,
+				}, nil
+			default:
+				t.Fatalf("unexpected call count: %d", callCount)
+				return nil, nil
+			}
+		},
+	}
+
+	agent := NewAgent(model, WithTools(tool))
+	result, err := agent.Generate(context.Background(), AgentCall{Prompt: "test"})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, result.Steps, 2)
+
+	// Response should carry text from step 1 even though step 2 is empty.
+	require.Equal(t, "Let me check that.", result.Response.Content.Text())
+}
+
 func TestStopConditions(t *testing.T) {
 	t.Parallel()
 
@@ -1918,8 +2079,9 @@ func TestToResponseMessages_ProviderExecutedRouting(t *testing.T) {
 		},
 		// Regular tool result.
 		&ToolResultContent{
-			ToolCallID: "toolu_02",
-			Result:     ToolResultOutputContentText{Text: "2"},
+			ToolCallID:     "toolu_02",
+			Result:         ToolResultOutputContentText{Text: "2"},
+			ClientMetadata: `{"precision":"high"}`,
 		},
 		// Some trailing text.
 		&TextContent{Text: "Done."},
@@ -1967,9 +2129,11 @@ func TestToResponseMessages_ProviderExecutedRouting(t *testing.T) {
 	require.Equal(t, MessageRoleTool, toolMsg.Role)
 	require.Len(t, toolMsg.Content, 1)
 
+	// Verify regular tool result is in tool message and client metadata survived.
 	tr2, ok := AsMessagePart[ToolResultPart](toolMsg.Content[0])
 	require.True(t, ok)
 	require.Equal(t, "toolu_02", tr2.ToolCallID)
+	require.Equal(t, `{"precision":"high"}`, tr2.ClientMetadata)
 	require.False(t, tr2.ProviderExecuted)
 }
 
@@ -2557,4 +2721,113 @@ func TestAgent_Generate_StopTurn_NotSet(t *testing.T) {
 	toolResults := result.Steps[0].Content.ToolResults()
 	require.Len(t, toolResults, 1)
 	require.False(t, toolResults[0].StopTurn)
+}
+
+func TestAgent_Generate_ToolPanicBecomesFailedResult(t *testing.T) {
+	t.Parallel()
+
+	type PanicInput struct {
+		Value string `json:"value" description:"Test value"`
+	}
+
+	panickingTool := NewAgentTool(
+		"panicking_tool",
+		"A tool that always panics",
+		func(ctx context.Context, input PanicInput, _ ToolCall) (ToolResponse, error) {
+			panic("nil pointer in tool implementation")
+		},
+	)
+
+	model := &mockLanguageModel{
+		generateFunc: func(ctx context.Context, call Call) (*Response, error) {
+			return &Response{
+				Content: []Content{
+					ToolCallContent{
+						ToolCallID: "call-panic",
+						ToolName:   "panicking_tool",
+						Input:      `{"value":"boom"}`,
+					},
+				},
+				Usage:        Usage{InputTokens: 3, OutputTokens: 10, TotalTokens: 13},
+				FinishReason: FinishReasonStop,
+			}, nil
+		},
+	}
+
+	agent := NewAgent(model, WithTools(panickingTool))
+	result, err := agent.Generate(context.Background(), AgentCall{
+		Prompt: "test-input",
+	})
+
+	// The process must survive the panic and surface it as a failed tool
+	// result instead.
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	var toolResults []ToolResultContent
+	for _, content := range result.Response.Content {
+		if toolResult, ok := AsContentType[ToolResultContent](content); ok {
+			toolResults = append(toolResults, toolResult)
+		}
+	}
+	require.Len(t, toolResults, 1)
+	require.Equal(t, "call-panic", toolResults[0].ToolCallID)
+
+	errResult, ok := toolResults[0].Result.(ToolResultOutputContentError)
+	require.True(t, ok, "expected error result, got %T", toolResults[0].Result)
+	require.ErrorContains(t, errResult.Error, "panicking_tool")
+	require.ErrorContains(t, errResult.Error, "nil pointer in tool implementation")
+}
+
+func TestAgent_Generate_ParallelToolPanicBecomesFailedResult(t *testing.T) {
+	t.Parallel()
+
+	type PanicInput struct {
+		Value string `json:"value" description:"Test value"`
+	}
+
+	panickingTool := NewParallelAgentTool(
+		"panicking_parallel_tool",
+		"A parallel tool that always panics",
+		func(ctx context.Context, input PanicInput, _ ToolCall) (ToolResponse, error) {
+			panic("parallel boom")
+		},
+	)
+
+	model := &mockLanguageModel{
+		generateFunc: func(ctx context.Context, call Call) (*Response, error) {
+			return &Response{
+				Content: []Content{
+					ToolCallContent{
+						ToolCallID: "call-parallel-panic",
+						ToolName:   "panicking_parallel_tool",
+						Input:      `{"value":"boom"}`,
+					},
+				},
+				Usage:        Usage{InputTokens: 3, OutputTokens: 10, TotalTokens: 13},
+				FinishReason: FinishReasonStop,
+			}, nil
+		},
+	}
+
+	agent := NewAgent(model, WithTools(panickingTool))
+	result, err := agent.Generate(context.Background(), AgentCall{
+		Prompt: "test-input",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	var toolResults []ToolResultContent
+	for _, content := range result.Response.Content {
+		if toolResult, ok := AsContentType[ToolResultContent](content); ok {
+			toolResults = append(toolResults, toolResult)
+		}
+	}
+	require.Len(t, toolResults, 1)
+
+	errResult, ok := toolResults[0].Result.(ToolResultOutputContentError)
+	require.True(t, ok, "expected error result, got %T", toolResults[0].Result)
+	require.ErrorContains(t, errResult.Error, "panicking_parallel_tool")
+	require.ErrorContains(t, errResult.Error, "parallel boom")
 }

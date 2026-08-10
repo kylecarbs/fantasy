@@ -3,7 +3,7 @@ package openai
 import (
 	"charm.land/fantasy"
 	"charm.land/fantasy/providers/internal/httpheaders"
-	"github.com/charmbracelet/openai-go/option"
+	"github.com/openai/openai-go/v3/option"
 )
 
 // callUARequestOptions returns per-request options that override the
@@ -28,4 +28,28 @@ func objectCallUARequestOptions(call fantasy.ObjectCall) []option.RequestOption 
 		return []option.RequestOption{option.WithHeader("User-Agent", ua)}
 	}
 	return nil
+}
+
+func callHeadersRequestOptions(call fantasy.Call) []option.RequestOption {
+	headers, ok := httpheaders.CallHeaders(call.Headers)
+	if !ok {
+		return nil
+	}
+	opts := make([]option.RequestOption, 0, len(headers))
+	for k, v := range headers {
+		opts = append(opts, option.WithHeader(k, v))
+	}
+	return opts
+}
+
+func objectCallHeadersRequestOptions(call fantasy.ObjectCall) []option.RequestOption {
+	headers, ok := httpheaders.CallHeaders(call.Headers)
+	if !ok {
+		return nil
+	}
+	opts := make([]option.RequestOption, 0, len(headers))
+	for k, v := range headers {
+		opts = append(opts, option.WithHeader(k, v))
+	}
+	return opts
 }

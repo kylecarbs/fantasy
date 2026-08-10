@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/http"
 	"strconv"
 	"time"
 )
@@ -55,8 +56,25 @@ func getRetryDelayInMs(err error, exponentialBackoffDelay time.Duration) time.Du
 // RetryWithExponentialBackoffRespectingRetryHeaders creates a retry function that retries
 // a failed operation with exponential backoff, while respecting rate limit headers
 // (retry-after-ms and retry-after) if they are provided and reasonable (0-60 seconds).
+//
+// When OnAuthRefresh is set and the operation ends in an authentication error,
+// the hook is given one chance to refresh credentials. On success the entire
+// retry pass runs again with a fresh budget; on failure the original auth
+// error is returned. At most one refresh is attempted, so a credential that
+// stays invalid cannot spin.
 func RetryWithExponentialBackoffRespectingRetryHeaders[T any](options RetryOptions) RetryFunction[T] {
 	return func(ctx context.Context, fn RetryFn[T]) (T, error) {
+		result, err := retryWithExponentialBackoff(ctx, fn, options, nil)
+		if err == nil || options.OnAuthRefresh == nil {
+			return result, err
+		}
+		var authErr *ProviderError
+		if !errors.As(err, &authErr) || !isAuthError(authErr) {
+			return result, err
+		}
+		if refreshErr := options.OnAuthRefresh(ctx, authErr); refreshErr != nil {
+			return result, err // refresh failed: surface the original auth error
+		}
 		return retryWithExponentialBackoff(ctx, fn, options, nil)
 	}
 }
@@ -67,17 +85,35 @@ type RetryOptions struct {
 	InitialDelayIn time.Duration
 	BackoffFactor  float64
 	OnRetry        OnRetryCallback
+
+	// OnAuthRefresh is called when an operation fails with an authentication
+	// error the caller may be able to resolve (e.g. an expired SSO session).
+	// If it returns nil, the entire retry pass restarts with a fresh retry
+	// budget; if it returns an error, the original auth error is returned
+	// without retry. At most one refresh is attempted, since auth refresh is
+	// a one-shot human-in-the-loop step and a second attempt would not fare
+	// better.
+	OnAuthRefresh OnAuthRefreshFunc
 }
 
-// OnRetryCallback defines a function that is called when a retry occurs.
+// OnRetryCallback is called before each retry attempt, after the retry
+// delay is chosen but before it elapses. err is the failure that triggered
+// the retry (nil if the failure was not a *ProviderError) and delay is how
+// long the middleware will wait before the next attempt.
+//
+// A retry re-runs the entire step from scratch: the stream is recreated and
+// the stream callbacks (OnTextStart, OnTextDelta, OnReasoningStart,
+// OnReasoningDelta, OnToolInputStart, etc.) fire again from the beginning of
+// the new response. Consumers that accumulate streamed content must reset
+// that accumulated state here, otherwise the retried response is appended to
+// the partial content from the failed attempt.
 type OnRetryCallback = func(err *ProviderError, delay time.Duration)
 
 // DefaultRetryOptions returns the default retry options.
-// DefaultRetryOptions returns the default retry options.
 func DefaultRetryOptions() RetryOptions {
 	return RetryOptions{
-		MaxRetries:     2,
-		InitialDelayIn: 2000 * time.Millisecond,
+		MaxRetries:     3,
+		InitialDelayIn: 5000 * time.Millisecond,
 		BackoffFactor:  2.0,
 	}
 }
@@ -133,10 +169,17 @@ func retryWithExponentialBackoff[T any](ctx context.Context, fn RetryFn[T], opti
 	return zero, &RetryError{newErrors}
 }
 
+// isAuthError reports whether the error is an authentication failure that a
+// caller-supplied OnAuthRefresh hook may be able to resolve.
+func isAuthError(err *ProviderError) bool {
+	return err.StatusCode == http.StatusUnauthorized || err.AuthError
+}
+
 // isRetryableError reports whether the error should be retried.
-// It checks for retryable ProviderError and also retries network-level
-// connection errors (DNS failures, TCP timeouts, connection refused, etc.)
-// that never produce an HTTP response and therefore aren't wrapped in ProviderError.
+// It checks for retryable ProviderError, network-level connection errors
+// (DNS failures, TCP timeouts, connection refused), and HTTP/2 stream-
+// level transport errors. The latter two categories may not be wrapped
+// in ProviderError when they occur outside the provider's error handler.
 func isRetryableError(err error) bool {
 	var providerErr *ProviderError
 	if errors.As(err, &providerErr) {
@@ -146,7 +189,10 @@ func isRetryableError(err error) bool {
 		return false
 	}
 	var netErr net.Error
-	return errors.As(err, &netErr)
+	if errors.As(err, &netErr) {
+		return true
+	}
+	return IsTransportError(err)
 }
 
 // isAbortError checks if the error is a context cancellation error.

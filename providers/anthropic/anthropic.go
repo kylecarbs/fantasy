@@ -265,6 +265,7 @@ func buildRequestOptions(call fantasy.Call, rawTools []json.RawMessage, betaFlag
 	}
 
 	reqOpts := callUARequestOptions(call)
+	reqOpts = append(reqOpts, callHeadersRequestOptions(call)...)
 	if len(rawTools) > 0 {
 		// Tools are injected as raw JSON rather than via params.Tools
 		// because the SDK doesn't model beta tool types (e.g. computer
@@ -1514,12 +1515,14 @@ func mapFinishReason(finishReason string) fantasy.FinishReason {
 	switch finishReason {
 	case "end_turn", "pause_turn", "stop_sequence":
 		return fantasy.FinishReasonStop
-	case "max_tokens":
+	case "max_tokens", "model_context_window_exceeded":
 		return fantasy.FinishReasonLength
 	case "tool_use":
 		return fantasy.FinishReasonToolCalls
-	case "refusal":
-		// Anthropic's real-time safety classifiers stopped the response.
+	case "refusal", "content_filtered", "guardrail_intervened":
+		// "refusal" is the native Anthropic safety stop. Bedrock
+		// reports guardrail / content-filter blocks with its own
+		// stop reasons instead, so map those here too.
 		return fantasy.FinishReasonContentFilter
 	default:
 		return fantasy.FinishReasonUnknown

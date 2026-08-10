@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/openai-go/responses"
+	"github.com/openai/openai-go/v3/responses"
 	"github.com/stretchr/testify/require"
 )
 

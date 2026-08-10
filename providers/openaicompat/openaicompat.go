@@ -4,7 +4,7 @@ package openaicompat
 import (
 	"charm.land/fantasy"
 	"charm.land/fantasy/providers/openai"
-	"github.com/charmbracelet/openai-go/option"
+	"github.com/openai/openai-go/v3/option"
 )
 
 type options struct {
@@ -127,5 +127,14 @@ func WithUseResponsesAPI() Option {
 func WithResponsesAPIFunc(fn func(modelID string) bool) Option {
 	return func(o *options) {
 		o.openaiOptions = append(o.openaiOptions, openai.WithResponsesAPIFunc(fn))
+	}
+}
+
+// WithLanguageModelOptions appends language model options to the provider.
+// This allows callers to customize usage extraction, stream handling, and
+// other language model behaviors.
+func WithLanguageModelOptions(opts ...openai.LanguageModelOption) Option {
+	return func(o *options) {
+		o.languageModelOptions = append(o.languageModelOptions, opts...)
 	}
 }
