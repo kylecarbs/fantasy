@@ -31,7 +31,7 @@ func (u Usage) String() string {
 // ResponseContent represents the content of a model response.
 type ResponseContent []Content
 
-// Text returns the text content of the response.
+// Text returns the first text content of the response.
 func (r ResponseContent) Text() string {
 	for _, c := range r {
 		if c.GetType() == ContentTypeText {
@@ -220,6 +220,9 @@ type Call struct {
 
 	// UserAgent overrides the provider-level User-Agent header for this call.
 	UserAgent string `json:"-"`
+
+	// Headers overrides matching provider-level headers for this call.
+	Headers map[string]string `json:"-"`
 
 	// for provider specific options, the key is the provider id
 	ProviderOptions ProviderOptions `json:"provider_options"`

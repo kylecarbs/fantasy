@@ -12,7 +12,7 @@ import (
 	"charm.land/fantasy"
 	"charm.land/fantasy/providers/openai"
 	"charm.land/x/vcr"
-	"github.com/charmbracelet/openai-go/responses"
+	"github.com/openai/openai-go/v3/responses"
 	"github.com/stretchr/testify/require"
 )
 

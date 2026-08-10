@@ -14,11 +14,11 @@ import (
 	"charm.land/fantasy"
 	"charm.land/fantasy/object"
 	"charm.land/fantasy/schema"
-	"github.com/charmbracelet/openai-go"
-	"github.com/charmbracelet/openai-go/packages/param"
-	"github.com/charmbracelet/openai-go/responses"
-	"github.com/charmbracelet/openai-go/shared"
 	"github.com/google/uuid"
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/packages/param"
+	"github.com/openai/openai-go/v3/responses"
+	"github.com/openai/openai-go/v3/shared"
 )
 
 const topLogprobsMax = 20
@@ -61,11 +61,11 @@ func getResponsesModelConfig(modelID string) responsesModelConfig {
 		strings.Contains(modelID, "-o3") || strings.Contains(modelID, "o4-mini") ||
 		(strings.Contains(modelID, "gpt-5") && !strings.Contains(modelID, "gpt-5-chat"))
 
-	supportsPriorityProcessing := strings.Contains(modelID, "gpt-4") ||
-		strings.Contains(modelID, "gpt-5-mini") ||
-		(strings.Contains(modelID, "gpt-5") &&
-			!strings.Contains(modelID, "gpt-5-nano") &&
-			!strings.Contains(modelID, "gpt-5-chat")) ||
+	supportsPriorityProcessing := strings.Contains(strings.ToLower(modelID), "gpt-4") ||
+		strings.Contains(strings.ToLower(modelID), "gpt-5-mini") ||
+		(strings.Contains(strings.ToLower(modelID), "gpt-5") &&
+			!strings.Contains(strings.ToLower(modelID), "gpt-5-nano") &&
+			!strings.Contains(strings.ToLower(modelID), "gpt-5-chat")) ||
 		strings.HasPrefix(modelID, "o3") ||
 		strings.Contains(modelID, "-o3") ||
 		strings.Contains(modelID, "o4-mini")
@@ -77,7 +77,7 @@ func getResponsesModelConfig(modelID string) responsesModelConfig {
 		supportsPriorityProcessing: supportsPriorityProcessing,
 	}
 
-	if strings.Contains(modelID, "gpt-5-chat") {
+	if strings.Contains(strings.ToLower(modelID), "gpt-5-chat") {
 		return responsesModelConfig{
 			isReasoningModel:           false,
 			systemMessageMode:          defaults.systemMessageMode,
@@ -91,8 +91,8 @@ func getResponsesModelConfig(modelID string) responsesModelConfig {
 		strings.HasPrefix(modelID, "o3") || strings.Contains(modelID, "-o3") ||
 		strings.HasPrefix(modelID, "o4") || strings.Contains(modelID, "-o4") ||
 		strings.HasPrefix(modelID, "oss") || strings.Contains(modelID, "-oss") ||
-		strings.Contains(modelID, "gpt-5") || strings.Contains(modelID, "codex-") ||
-		strings.Contains(modelID, "computer-use") {
+		strings.Contains(strings.ToLower(modelID), "gpt-5") ||
+		strings.Contains(modelID, "codex-") || strings.Contains(modelID, "computer-use") {
 		if strings.Contains(modelID, "o1-mini") || strings.Contains(modelID, "o1-preview") {
 			return responsesModelConfig{
 				isReasoningModel:           true,
@@ -602,16 +602,7 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 						continue
 					}
 
-					inputJSON, err := json.Marshal(toolCallPart.Input)
-					if err != nil {
-						warnings = append(warnings, fantasy.CallWarning{
-							Type:    fantasy.CallWarningTypeOther,
-							Message: fmt.Sprintf("failed to marshal tool call input: %v", err),
-						})
-						continue
-					}
-
-					input = append(input, responses.ResponseInputItemParamOfFunctionCall(string(inputJSON), toolCallPart.ToolCallID, toolCallPart.ToolName))
+					input = append(input, responses.ResponseInputItemParamOfFunctionCall(toolCallPart.Input, toolCallPart.ToolCallID, toolCallPart.ToolName))
 					lastEmittedReasoningReference = false
 				case fantasy.ContentTypeSource:
 					// Source citations from web search are not a
@@ -1027,7 +1018,7 @@ func (o responsesLanguageModel) Generate(ctx context.Context, call fantasy.Call)
 		return nil, err
 	}
 
-	response, err := o.client.Responses.New(ctx, *params, callUARequestOptions(call)...)
+	response, err := o.client.Responses.New(ctx, *params, append(callUARequestOptions(call), callHeadersRequestOptions(call)...)...)
 	if err != nil {
 		return nil, toProviderErr(err)
 	}
@@ -1203,7 +1194,7 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 		return nil, err
 	}
 
-	stream := o.client.Responses.NewStreaming(ctx, *params, callUARequestOptions(call)...)
+	stream := o.client.Responses.NewStreaming(ctx, *params, append(callUARequestOptions(call), callHeadersRequestOptions(call)...)...)
 
 	finishReason := fantasy.FinishReasonUnknown
 	var usage fantasy.Usage
@@ -1739,7 +1730,7 @@ func (o responsesLanguageModel) generateObjectWithJSONMode(ctx context.Context, 
 	}
 
 	// Make request
-	response, err := o.client.Responses.New(ctx, *params, objectCallUARequestOptions(call)...)
+	response, err := o.client.Responses.New(ctx, *params, append(objectCallUARequestOptions(call), objectCallHeadersRequestOptions(call)...)...)
 	if err != nil {
 		return nil, toProviderErr(err)
 	}
@@ -1842,7 +1833,7 @@ func (o responsesLanguageModel) streamObjectWithJSONMode(ctx context.Context, ca
 		Format: responses.ResponseFormatTextConfigParamOfJSONSchema(schemaName, jsonSchemaMap),
 	}
 
-	stream := o.client.Responses.NewStreaming(ctx, *params, objectCallUARequestOptions(call)...)
+	stream := o.client.Responses.NewStreaming(ctx, *params, append(objectCallUARequestOptions(call), objectCallHeadersRequestOptions(call)...)...)
 
 	return func(yield func(fantasy.ObjectStreamPart) bool) {
 		if len(warnings) > 0 {

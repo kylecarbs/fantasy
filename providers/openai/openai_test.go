@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/openai-go/packages/param"
+	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -2288,6 +2288,47 @@ func (sms *streamingMockServer) prepareToolStreamResponse() {
 	sms.chunks = chunks
 }
 
+// prepareParallelToolStreamResponse streams two tool calls (index 0 and
+// index 1) the way OpenAI-compatible providers do: each call's fragments
+// arrive sequentially by index, and finish_reason only comes at the end.
+func (sms *streamingMockServer) prepareParallelToolStreamResponse() {
+	chunk := func(body string) string {
+		return `data: {"id":"chatcmpl-parallel","object":"chat.completion.chunk","created":1711357598,"model":"gpt-3.5-turbo-0125","choices":[{"index":0,"delta":` + body + `,"finish_reason":null}]}` + "\n\n"
+	}
+	chunks := []string{
+		// Tool call 0 (get_weather)
+		chunk(`{"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"call_weather","type":"function","function":{"name":"get_weather","arguments":""}}]}`),
+		chunk(`{"tool_calls":[{"index":0,"function":{"arguments":"{\"city\":"}}]}`),
+		chunk(`{"tool_calls":[{"index":0,"function":{"arguments":"\"NYC\"}"}}]}`),
+		// Tool call 1 (get_time) — appearance of index 1 closes call 0
+		chunk(`{"tool_calls":[{"index":1,"id":"call_time","type":"function","function":{"name":"get_time","arguments":""}}]}`),
+		chunk(`{"tool_calls":[{"index":1,"function":{"arguments":"{\"tz\":"}}]}`),
+		chunk(`{"tool_calls":[{"index":1,"function":{"arguments":"\"EST\"}"}}]}`),
+		`data: {"id":"chatcmpl-parallel","object":"chat.completion.chunk","created":1711357598,"model":"gpt-3.5-turbo-0125","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n",
+		`data: {"id":"chatcmpl-parallel","object":"chat.completion.chunk","created":1711357598,"model":"gpt-3.5-turbo-0125","choices":[],"usage":{"prompt_tokens":53,"completion_tokens":17,"total_tokens":70}}` + "\n\n",
+		"data: [DONE]\n\n",
+	}
+	sms.chunks = chunks
+}
+
+func (sms *streamingMockServer) prepareMixedContentAndToolStreamResponse() {
+	chunks := []string{
+		// Chunk with both content and tool_calls in the same delta
+		`data: {"id":"chatcmpl-mixed","object":"chat.completion.chunk","created":1711357598,"model":"gpt-3.5-turbo-0125","system_fingerprint":"fp_3bc1b5746c","choices":[{"index":0,"delta":{"role":"assistant","content":"thinking before tool","tool_calls":[{"index":0,"id":"call_mixed","type":"function","function":{"name":"test-tool","arguments":""}}]},"logprobs":null,"finish_reason":null}]}` + "\n\n",
+		// Tool call argument deltas
+		`data: {"id":"chatcmpl-mixed","object":"chat.completion.chunk","created":1711357598,"model":"gpt-3.5-turbo-0125","system_fingerprint":"fp_3bc1b5746c","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\""}}]},"logprobs":null,"finish_reason":null}]}` + "\n\n",
+		`data: {"id":"chatcmpl-mixed","object":"chat.completion.chunk","created":1711357598,"model":"gpt-3.5-turbo-0125","system_fingerprint":"fp_3bc1b5746c","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"value"}}]},"logprobs":null,"finish_reason":null}]}` + "\n\n",
+		`data: {"id":"chatcmpl-mixed","object":"chat.completion.chunk","created":1711357598,"model":"gpt-3.5-turbo-0125","system_fingerprint":"fp_3bc1b5746c","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":\""}}]},"logprobs":null,"finish_reason":null}]}` + "\n\n",
+		`data: {"id":"chatcmpl-mixed","object":"chat.completion.chunk","created":1711357598,"model":"gpt-3.5-turbo-0125","system_fingerprint":"fp_3bc1b5746c","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"hello"}}]},"logprobs":null,"finish_reason":null}]}` + "\n\n",
+		`data: {"id":"chatcmpl-mixed","object":"chat.completion.chunk","created":1711357598,"model":"gpt-3.5-turbo-0125","system_fingerprint":"fp_3bc1b5746c","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"}"}}]},"logprobs":null,"finish_reason":null}]}` + "\n\n",
+		// Finish
+		`data: {"id":"chatcmpl-mixed","object":"chat.completion.chunk","created":1711357598,"model":"gpt-3.5-turbo-0125","system_fingerprint":"fp_3bc1b5746c","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"tool_calls"}]}` + "\n\n",
+		`data: {"id":"chatcmpl-mixed","object":"chat.completion.chunk","created":1711357598,"model":"gpt-3.5-turbo-0125","system_fingerprint":"fp_3bc1b5746c","choices":[],"usage":{"prompt_tokens":53,"completion_tokens":17,"total_tokens":70}}` + "\n\n",
+		"data: [DONE]\n\n",
+	}
+	sms.chunks = chunks
+}
+
 func (sms *streamingMockServer) prepareErrorStreamResponse() {
 	chunks := []string{
 		`data: {"error":{"message": "The server had an error processing your request. Sorry about that! You can retry your request, or contact us through our help center at help.openai.com if you keep seeing this error.","type":"server_error","param":null,"code":null}}` + "\n\n",
@@ -2564,6 +2605,144 @@ func TestDoStream(t *testing.T) {
 			fullInput.WriteString(delta)
 		}
 		require.Equal(t, `{"value":"Sparkle Day"}`, fullInput.String())
+	})
+
+	t.Run("should frame parallel tool calls during streaming", func(t *testing.T) {
+		t.Parallel()
+
+		server := newStreamingMockServer()
+		defer server.close()
+
+		server.prepareParallelToolStreamResponse()
+
+		provider, err := New(
+			WithAPIKey("test-api-key"),
+			WithBaseURL(server.server.URL),
+		)
+		require.NoError(t, err)
+		model, _ := provider.LanguageModel(t.Context(), "gpt-3.5-turbo")
+
+		stream, err := model.Stream(context.Background(), fantasy.Call{
+			Prompt: testPrompt,
+			Tools: []fantasy.Tool{
+				fantasy.FunctionTool{Name: "get_weather"},
+				fantasy.FunctionTool{Name: "get_time"},
+			},
+		})
+		require.NoError(t, err)
+
+		parts, err := collectStreamParts(stream)
+		require.NoError(t, err)
+
+		// The framing contract: a tool call must be fully delimited
+		// (Start -> Deltas -> End) before the next one opens. No two calls
+		// may be open at once, and no delta may arrive for an already-ended
+		// call. This is what lets an order/index-keyed consumer reconstruct
+		// parallel calls without buffering the whole stream.
+		var openID string // currently open tool call, "" if none
+		ended := map[string]bool{}
+		seenStart := map[string]bool{}
+		argsByID := map[string]*strings.Builder{}
+		nameByID := map[string]string{}
+		var order []string
+
+		for _, part := range parts {
+			switch part.Type {
+			case fantasy.StreamPartTypeToolInputStart:
+				require.Empty(t, openID,
+					"tool call %s opened while %s still open (interleaved framing)", part.ID, openID)
+				require.False(t, seenStart[part.ID], "duplicate start for %s", part.ID)
+				openID = part.ID
+				seenStart[part.ID] = true
+				nameByID[part.ID] = part.ToolCallName
+				argsByID[part.ID] = &strings.Builder{}
+				order = append(order, part.ID)
+			case fantasy.StreamPartTypeToolInputDelta:
+				require.Equal(t, openID, part.ID,
+					"delta for %s but open call is %q", part.ID, openID)
+				require.False(t, ended[part.ID], "delta after end for %s", part.ID)
+				argsByID[part.ID].WriteString(part.Delta)
+			case fantasy.StreamPartTypeToolInputEnd:
+				require.Equal(t, openID, part.ID,
+					"end for %s but open call is %q", part.ID, openID)
+				ended[part.ID] = true
+				openID = ""
+			case fantasy.StreamPartTypeToolCall:
+				require.True(t, ended[part.ID], "tool call %s finalized before end", part.ID)
+				nameByID[part.ID] = part.ToolCallName
+				argsByID[part.ID].Reset()
+				argsByID[part.ID].WriteString(part.ToolCallInput)
+			}
+		}
+
+		require.Equal(t, []string{"call_weather", "call_time"}, order,
+			"expected two distinct calls framed in order")
+		require.Equal(t, "get_weather", nameByID["call_weather"])
+		require.JSONEq(t, `{"city":"NYC"}`, argsByID["call_weather"].String())
+		require.Equal(t, "get_time", nameByID["call_time"])
+		require.JSONEq(t, `{"tz":"EST"}`, argsByID["call_time"].String())
+	})
+
+	t.Run("should handle mixed content and tool calls in same chunk", func(t *testing.T) {
+		t.Parallel()
+
+		server := newStreamingMockServer()
+		defer server.close()
+
+		server.prepareMixedContentAndToolStreamResponse()
+
+		provider, err := New(
+			WithAPIKey("test-api-key"),
+			WithBaseURL(server.server.URL),
+		)
+		require.NoError(t, err)
+		model, _ := provider.LanguageModel(t.Context(), "gpt-3.5-turbo")
+
+		stream, err := model.Stream(context.Background(), fantasy.Call{
+			Prompt: testPrompt,
+			Tools: []fantasy.Tool{
+				fantasy.FunctionTool{
+					Name: "test-tool",
+					InputSchema: map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"value": map[string]any{
+								"type": "string",
+							},
+						},
+						"required":             []string{"value"},
+						"additionalProperties": false,
+						"$schema":              "http://json-schema.org/draft-07/schema#",
+					},
+				},
+			},
+		})
+
+		require.NoError(t, err)
+
+		parts, err := collectStreamParts(stream)
+		require.NoError(t, err)
+
+		// Verify both text and tool call parts are present
+		hasTextDelta := false
+		toolCall := -1
+
+		for i, part := range parts {
+			switch part.Type {
+			case fantasy.StreamPartTypeTextDelta:
+				if part.Delta == "thinking before tool" {
+					hasTextDelta = true
+				}
+			case fantasy.StreamPartTypeToolCall:
+				toolCall = i
+				require.Equal(t, "call_mixed", part.ID)
+				require.Equal(t, "test-tool", part.ToolCallName)
+				require.Equal(t, `{"value":"hello"}`, part.ToolCallInput)
+			}
+		}
+
+		require.True(t, hasTextDelta, "expected text delta from mixed chunk")
+		require.NotEqual(t, -1, toolCall, "expected tool call from mixed chunk")
 	})
 
 	t.Run("should handle tool calls with empty arguments", func(t *testing.T) {
@@ -3720,6 +3899,13 @@ func TestParseContextTooLargeError(t *testing.T) {
 			message: "<400> InternalError.Algo.InvalidParameter: Range of input length should be [1, 245760]",
 			wantErr: true,
 			wantMax: 245760,
+		},
+		{
+			name:     "matches vercel format",
+			message:  "Input too long: 518063 input tokens, limit is 262144 for this model",
+			wantErr:  true,
+			wantUsed: 518063,
+			wantMax:  262144,
 		},
 		{
 			name:    "does not match unrelated error",
