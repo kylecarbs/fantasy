@@ -1237,6 +1237,27 @@ func TestStream_SendsOutputConfigEffort(t *testing.T) {
 	requireAnthropicEffort(t, call.body, EffortHigh)
 }
 
+func TestStream_FinishUsesMessageStartInputUsage(t *testing.T) {
+	t.Parallel()
+
+	parts := streamAnthropicParts(t, []string{
+		anthropicSSEEvent("message_start", `{"type":"message_start","message":{"id":"msg_multi_iteration","type":"message","role":"assistant","model":"claude-fable-5","content":[],"stop_reason":null,"usage":{"input_tokens":2,"cache_read_input_tokens":139956,"cache_creation_input_tokens":7770,"output_tokens":0}}}`),
+		anthropicSSEEvent("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`),
+		anthropicSSEEvent("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}`),
+		anthropicSSEEvent("content_block_stop", `{"type":"content_block_stop","index":0}`),
+		anthropicSSEEvent("message_delta", `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":4,"cache_read_input_tokens":287682,"cache_creation_input_tokens":15556,"output_tokens":4996}}`),
+		anthropicSSEEvent("message_stop", `{"type":"message_stop"}`),
+	})
+
+	finishes := streamPartsByType(parts, fantasy.StreamPartTypeFinish)
+	require.Len(t, finishes, 1)
+	require.Equal(t, int64(2), finishes[0].Usage.InputTokens)
+	require.Equal(t, int64(139956), finishes[0].Usage.CacheReadTokens)
+	require.Equal(t, int64(7770), finishes[0].Usage.CacheCreationTokens)
+	require.Equal(t, int64(4996), finishes[0].Usage.OutputTokens)
+	require.Equal(t, int64(4998), finishes[0].Usage.TotalTokens)
+}
+
 func TestStream_RequiresMessageStopBeforeFinish(t *testing.T) {
 	t.Parallel()
 
