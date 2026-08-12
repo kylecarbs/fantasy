@@ -1725,11 +1725,15 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 
 		sawMessageStop := false
 		var refusalMeta *RefusalMetadata
+		var messageStartUsage *anthropic.Usage
 
 		for stream.Next() {
 			chunk := stream.Current()
 			_ = acc.Accumulate(chunk)
 			switch chunk.Type {
+			case "message_start":
+				usage := chunk.AsMessageStart().Message.Usage
+				messageStartUsage = &usage
 			case "content_block_start":
 				contentBlockType := chunk.ContentBlock.Type
 				switch contentBlockType {
@@ -1965,16 +1969,25 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 			return
 		}
 
+		usage := acc.Usage
+		if messageStartUsage != nil {
+			// message_delta can sum input usage across internal iterations. Use
+			// message_start for per-request context occupancy.
+			usage.InputTokens = messageStartUsage.InputTokens
+			usage.CacheCreationInputTokens = messageStartUsage.CacheCreationInputTokens
+			usage.CacheReadInputTokens = messageStartUsage.CacheReadInputTokens
+		}
+
 		yield(fantasy.StreamPart{
 			Type:         fantasy.StreamPartTypeFinish,
 			ID:           acc.ID,
 			FinishReason: mapFinishReason(string(acc.StopReason)),
 			Usage: fantasy.Usage{
-				InputTokens:         acc.Usage.InputTokens,
-				OutputTokens:        acc.Usage.OutputTokens,
-				TotalTokens:         acc.Usage.InputTokens + acc.Usage.OutputTokens,
-				CacheCreationTokens: acc.Usage.CacheCreationInputTokens,
-				CacheReadTokens:     acc.Usage.CacheReadInputTokens,
+				InputTokens:         usage.InputTokens,
+				OutputTokens:        usage.OutputTokens,
+				TotalTokens:         usage.InputTokens + usage.OutputTokens,
+				CacheCreationTokens: usage.CacheCreationInputTokens,
+				CacheReadTokens:     usage.CacheReadInputTokens,
 			},
 			ProviderMetadata: refusalProviderMetadata(refusalMeta),
 		})
