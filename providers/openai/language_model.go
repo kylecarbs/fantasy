@@ -341,7 +341,12 @@ func (o languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 		for stream.Next() {
 			chunk := stream.Current()
 			acc.AddChunk(chunk)
-			usage, providerMetadata = o.streamUsageFunc(chunk, extraContext, providerMetadata)
+			// Some OpenAI-compatible backends emit cumulative usage on
+			// delta chunks and end with a usage-less finish chunk; keep
+			// the last usage-bearing result instead of zeroing it.
+			if chunkUsage, chunkMetadata := o.streamUsageFunc(chunk, extraContext, providerMetadata); chunkUsage != (fantasy.Usage{}) {
+				usage, providerMetadata = chunkUsage, chunkMetadata
+			}
 			if len(chunk.Choices) == 0 {
 				continue
 			}
@@ -870,8 +875,11 @@ func (o languageModel) streamObjectWithJSONMode(ctx context.Context, call fantas
 		for stream.Next() {
 			chunk := stream.Current()
 
-			// Update usage
-			usage, providerMetadata = o.streamUsageFunc(chunk, make(map[string]any), providerMetadata)
+			// Update usage, ignoring usage-less chunks so a trailing
+			// finish chunk cannot zero previously reported usage.
+			if chunkUsage, chunkMetadata := o.streamUsageFunc(chunk, make(map[string]any), providerMetadata); chunkUsage != (fantasy.Usage{}) {
+				usage, providerMetadata = chunkUsage, chunkMetadata
+			}
 
 			if len(chunk.Choices) == 0 {
 				continue
