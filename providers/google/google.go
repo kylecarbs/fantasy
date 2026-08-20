@@ -1163,24 +1163,14 @@ func toGoogleTools(tools []fantasy.Tool, toolChoice *fantasy.ToolChoice) (google
 				continue
 			}
 
-			var required []string
-			var properties map[string]any
-			if props, ok := ft.InputSchema["properties"]; ok {
-				properties, _ = props.(map[string]any)
-			}
-			if req, ok := ft.InputSchema["required"]; ok {
-				if reqArr, ok := req.([]string); ok {
-					required = reqArr
-				}
+			parameters := convertToSchema(inlineLocalSchemaRefs(ft.InputSchema))
+			if parameters.Type == "" {
+				parameters.Type = genai.TypeObject
 			}
 			declaration := &genai.FunctionDeclaration{
 				Name:        ft.Name,
 				Description: ft.Description,
-				Parameters: &genai.Schema{
-					Type:       genai.TypeObject,
-					Properties: convertSchemaProperties(properties),
-					Required:   required,
-				},
+				Parameters:  parameters,
 			}
 			googleTools = append(googleTools, declaration)
 			continue
@@ -1227,6 +1217,115 @@ func toGoogleTools(tools []fantasy.Tool, toolChoice *fantasy.ToolChoice) (google
 	return googleTools, googleToolChoice, warnings
 }
 
+const maxSchemaRefDepth = 32
+
+func inlineLocalSchemaRefs(schema map[string]any) map[string]any {
+	resolved, ok := resolveLocalSchemaRefs(schema, schema, make(map[string]struct{}), 0)
+	if !ok {
+		return map[string]any{}
+	}
+	resolvedSchema, ok := resolved.(map[string]any)
+	if !ok {
+		return map[string]any{}
+	}
+	return resolvedSchema
+}
+
+func resolveLocalSchemaRefs(value any, root map[string]any, resolving map[string]struct{}, depth int) (any, bool) {
+	switch typed := value.(type) {
+	case map[string]any:
+		if ref, ok := typed["$ref"].(string); ok && strings.HasPrefix(ref, "#/$defs/") {
+			if depth >= maxSchemaRefDepth {
+				return nil, false
+			}
+			if _, ok := resolving[ref]; ok {
+				return nil, false
+			}
+			target, ok := localSchemaRefTarget(root, ref)
+			if !ok {
+				return nil, false
+			}
+			resolving[ref] = struct{}{}
+			resolved, ok := resolveLocalSchemaRefs(target, root, resolving, depth+1)
+			delete(resolving, ref)
+			if !ok {
+				return nil, false
+			}
+			resolvedMap, ok := resolved.(map[string]any)
+			if !ok {
+				return nil, false
+			}
+			result := maps.Clone(resolvedMap)
+			for key, item := range typed {
+				if key == "$ref" || key == "$defs" {
+					continue
+				}
+				resolvedItem, ok := resolveLocalSchemaRefs(item, root, resolving, depth)
+				if ok {
+					result[key] = resolvedItem
+				}
+			}
+			return result, true
+		}
+
+		result := make(map[string]any, len(typed))
+		for key, item := range typed {
+			if key == "$defs" {
+				continue
+			}
+			resolvedItem, ok := resolveLocalSchemaRefs(item, root, resolving, depth)
+			if ok {
+				result[key] = resolvedItem
+			}
+		}
+		return result, true
+	case []any:
+		result := make([]any, 0, len(typed))
+		for _, item := range typed {
+			resolvedItem, ok := resolveLocalSchemaRefs(item, root, resolving, depth)
+			if ok {
+				result = append(result, resolvedItem)
+			}
+		}
+		return result, true
+	default:
+		return typed, true
+	}
+}
+
+func localSchemaRefTarget(root map[string]any, ref string) (any, bool) {
+	current := any(root)
+	for _, token := range strings.Split(strings.TrimPrefix(ref, "#/"), "/") {
+		token = strings.ReplaceAll(strings.ReplaceAll(token, "~1", "/"), "~0", "~")
+		object, ok := current.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		current, ok = object[token]
+		if !ok {
+			return nil, false
+		}
+	}
+	return current, true
+}
+
+func schemaStringSlice(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return append([]string(nil), typed...)
+	case []any:
+		result := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if stringItem, ok := item.(string); ok {
+				result = append(result, stringItem)
+			}
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
 func convertSchemaProperties(parameters map[string]any) map[string]*genai.Schema {
 	properties := make(map[string]*genai.Schema)
 
@@ -1238,23 +1337,25 @@ func convertSchemaProperties(parameters map[string]any) map[string]*genai.Schema
 }
 
 func convertToSchema(param any) *genai.Schema {
-	schema := &genai.Schema{Type: genai.TypeString}
-
 	paramMap, ok := param.(map[string]any)
 	if !ok {
-		return schema
+		return &genai.Schema{Type: genai.TypeString}
 	}
 
+	schema := &genai.Schema{
+		Enum:     schemaStringSlice(paramMap["enum"]),
+		Required: schemaStringSlice(paramMap["required"]),
+	}
 	if desc, ok := paramMap["description"].(string); ok {
 		schema.Description = desc
 	}
-
-	typeVal, hasType := paramMap["type"]
-	if !hasType {
-		return schema
+	if alternatives, ok := paramMap["anyOf"].([]any); ok {
+		for _, alternative := range alternatives {
+			schema.AnyOf = append(schema.AnyOf, convertToSchema(alternative))
+		}
 	}
 
-	typeStr, ok := typeVal.(string)
+	typeStr, ok := paramMap["type"].(string)
 	if !ok {
 		return schema
 	}
@@ -1274,7 +1375,7 @@ func convertToSchema(param any) *genai.Schema {
 }
 
 func processArrayItems(paramMap map[string]any) *genai.Schema {
-	items, ok := paramMap["items"].(map[string]any)
+	items, ok := paramMap["items"]
 	if !ok {
 		return nil
 	}
