@@ -124,7 +124,7 @@ func GenerateWithTool(
 		ProviderOptions:  call.ProviderOptions,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("tool-based generation failed: %w", err)
+		return nil, fmt.Errorf("structured output generation failed (tool-call strategy): %w", err)
 	}
 
 	toolCalls := resp.Content.ToolCalls()
